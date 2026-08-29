@@ -6,7 +6,7 @@ Recommendations in this toolkit are aligned with widely used guidance. They are
 | Area | Implementation | Primary references |
 | --- | --- | --- |
 | OS lifecycle / updates | `modules/updates.sh` | CIS 1.9, CIS Control 7 |
-| Filesystem mounts | `modules/filesystem.sh` (audit only) | CIS 1.1 |
+| Filesystem mounts | `modules/filesystem.sh` (sticky /tmp, /dev/shm remount) | CIS 1.1 |
 | AIDE | `modules/integrity.sh` | CIS 1.4, CIS Control 3 |
 | Time sync | `modules/time_sync.sh` | CIS 1.3, NIST AU-8 |
 | Unnecessary services | `modules/services.sh` | CIS 2.2, CIS Control 4 |
@@ -28,7 +28,7 @@ Recommendations in this toolkit are aligned with widely used guidance. They are
 - No automatic user deletion
 - No automatic disable of unknown systemd units
 - No automatic IPv6 disable
-- No automatic `noexec` remounts
+- No automatic `noexec` remounts on `/tmp` (`FS_TMP_NOEXEC=false`)
 - No password authentication disable by default
 - No MFA enablement without confirmation
 - No Wazuh registration keys in source or logs

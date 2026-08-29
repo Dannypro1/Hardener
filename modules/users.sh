@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# User security audit and cautious remediation. Never deletes accounts.
+# User defenses. Never deletes accounts. Locks empty-password accounts on apply.
 
 _users_uid0() {
   awk -F: '$3 == 0 { print $1 }' /etc/passwd 2>/dev/null
@@ -11,8 +11,19 @@ _users_empty_password() {
   fi
 }
 
-_users_nologin_shells() {
-  printf '%s\n' /sbin/nologin /usr/sbin/nologin /bin/false /usr/bin/false
+_users_nologin_shell() {
+  if [[ -x /usr/sbin/nologin ]]; then
+    printf '/usr/sbin/nologin'
+  elif [[ -x /sbin/nologin ]]; then
+    printf '/sbin/nologin'
+  else
+    printf '/bin/false'
+  fi
+}
+
+# System accounts that should not have a login shell.
+_users_locked_system_accounts() {
+  printf '%s\n' daemon bin sys sync games man lp mail news uucp proxy www-data backup list irc gnats nobody
 }
 
 module_users_audit() {
@@ -43,7 +54,7 @@ module_users_audit() {
       "Accounts with empty password hashes" \
       "$empty" \
       "No empty password fields" \
-      "Lock or set passwords. Confirmation required before lock." \
+      "Apply this module to lock those accounts" \
       "CIS 5.4.1 / NIST IA-5"
   else
     record_finding "Empty Passwords" "PASS" "INFO" \
@@ -54,19 +65,23 @@ module_users_audit() {
       "CIS 5.4.1"
   fi
 
-  local home user homedir
+  if [[ -f /etc/profile.d/99-server-hardening-umask.sh ]]; then
+    record_finding "User umask" "PASS" "INFO" "Managed umask profile is present" \
+      "${USER_UMASK:-027}" "027" "No action" "CIS 5.4.3"
+  fi
+
+  local user homedir uid mode
   while IFS=: read -r user _ uid _ _ homedir _; do
     [[ "$uid" -lt 1000 && "$user" != "root" ]] && continue
     [[ -z "$homedir" || "$homedir" == "/" ]] && continue
     if [[ -d "$homedir" ]]; then
-      local mode
       mode="$(file_mode "$homedir" || true)"
       if [[ -n "$mode" && "$mode" -gt 750 ]]; then
         record_finding "Home Permissions" "WARN" "MEDIUM" \
           "Home directory is overly permissive" \
           "${homedir} mode=${mode}" \
           "0750 or stricter" \
-          "chmod 0750 ${homedir}" \
+          "Apply this module to chmod 0750" \
           "CIS 5.4.2.6"
       fi
     fi
@@ -74,39 +89,104 @@ module_users_audit() {
 }
 
 module_users_plan() {
-  printf '  Audit local users, UID 0, empty passwords, shells, sudo, homes\n'
-  printf '  Lock empty-password accounts only after confirmation\n'
+  printf '  Lock empty-password accounts (USER_LOCK_EMPTY_PASSWORDS=%s)\n' "${USER_LOCK_EMPTY_PASSWORDS:-true}"
+  printf '  Set umask %s and TMOUT=%s via profile.d\n' "${USER_UMASK:-027}" "${USER_TMOUT:-900}"
+  printf '  Tighten home directories to 0750 (USER_TIGHTEN_HOMES=%s)\n' "${USER_TIGHTEN_HOMES:-true}"
   printf '  Never delete users automatically\n'
+}
+
+_users_lock_account() {
+  local acct="$1"
+  log_action "Lock empty-password account ${acct}"
+  if changes_allowed && have_cmd passwd; then
+    passwd -l "$acct" || true
+  fi
+}
+
+_users_apply_umask_tmout() {
+  local umask_val="${USER_UMASK:-027}"
+  write_managed_file /etc/profile.d/99-server-hardening-umask.sh 0644 users <<EOF
+# Managed by Server Hardener
+umask ${umask_val}
+EOF
+
+  if [[ -f /etc/login.defs ]]; then
+    backup_file /etc/login.defs users
+    if changes_allowed; then
+      if grep -qE '^UMASK[[:space:]]' /etc/login.defs; then
+        sed -i -E "s/^UMASK[[:space:]]+.*/UMASK\t${umask_val}/" /etc/login.defs
+      else
+        printf 'UMASK\t%s\n' "$umask_val" >> /etc/login.defs
+      fi
+    else
+      log_action "Would set UMASK ${umask_val} in login.defs"
+    fi
+  fi
+
+  local tmout="${USER_TMOUT:-900}"
+  if [[ "$tmout" != "0" && -n "$tmout" ]]; then
+    write_managed_file /etc/profile.d/99-server-hardening-tmout.sh 0644 users <<EOF
+# Managed by Server Hardener — idle shell timeout (seconds)
+readonly TMOUT=${tmout}
+export TMOUT
+EOF
+  fi
+}
+
+_users_nologin_system() {
+  local acct shell nologin
+  nologin="$(_users_nologin_shell)"
+  [[ -f /etc/passwd ]] || return 0
+  while IFS= read -r acct; do
+    [[ -z "$acct" ]] && continue
+    grep -qE "^${acct}:" /etc/passwd || continue
+    shell="$(awk -F: -v u="$acct" '$1==u {print $7}' /etc/passwd)"
+    case "$shell" in
+      /sbin/nologin|/usr/sbin/nologin|/bin/false|/usr/bin/false|"") continue ;;
+    esac
+    # Only touch well-known system accounts, never human users.
+    log_action "Set nologin shell on system account ${acct}"
+    if changes_allowed && have_cmd usermod; then
+      usermod -s "$nologin" "$acct" || true
+    fi
+  done < <(_users_locked_system_accounts)
 }
 
 module_users_apply() {
   local acct
   while IFS= read -r acct; do
     [[ -z "$acct" ]] && continue
-    if prompt_confirm_dangerous "Lock account '${acct}' because it has an empty password?"; then
-      log_action "Lock empty-password account ${acct}"
-      if changes_allowed && have_cmd passwd; then
-        passwd -l "$acct" || true
-      fi
+    if is_false "${USER_LOCK_EMPTY_PASSWORDS:-true}"; then
+      log_warning "Left empty-password account unchanged: ${acct}"
+      continue
+    fi
+    if is_true "$NON_INTERACTIVE"; then
+      _users_lock_account "$acct"
+    elif prompt_confirm_dangerous "Lock account '${acct}' because it has an empty password?"; then
+      _users_lock_account "$acct"
     else
       log_warning "Left empty-password account unchanged: ${acct}"
     fi
   done < <(_users_empty_password)
 
-  local user homedir uid mode
-  while IFS=: read -r user _ uid _ _ homedir _; do
-    [[ "$uid" -lt 1000 && "$user" != "root" ]] && continue
-    [[ -d "$homedir" ]] || continue
-    mode="$(file_mode "$homedir" || true)"
-    if [[ -n "$mode" && "$mode" -gt 750 ]]; then
-      if prompt_yes_no "Tighten ${homedir} from ${mode} to 0750?" "n"; then
+  if is_true "${USER_TIGHTEN_HOMES:-true}"; then
+    local user homedir uid mode
+    while IFS=: read -r user _ uid _ _ homedir _; do
+      [[ "$uid" -lt 1000 && "$user" != "root" ]] && continue
+      [[ -d "$homedir" ]] || continue
+      mode="$(file_mode "$homedir" || true)"
+      if [[ -n "$mode" && "$mode" -gt 750 ]]; then
+        backup_file "$homedir" users
         log_action "chmod 0750 ${homedir}"
         if changes_allowed; then
           chmod 0750 "$homedir"
         fi
       fi
-    fi
-  done < /etc/passwd
+    done < /etc/passwd
+  fi
+
+  _users_apply_umask_tmout
+  _users_nologin_system
 }
 
 module_users_validate() {

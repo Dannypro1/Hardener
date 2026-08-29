@@ -15,6 +15,7 @@ It is built for real servers — including remote SSH sessions — and prefers *
 - auditd, Fail2ban, AIDE, and optional Wazuh agent integration
 - Timestamped backups and targeted rollback
 - Scored compliance report mapped to CIS / NIST guidance (see [docs/CONTROLS.md](docs/CONTROLS.md))
+- Active defenses on apply (not audit-only): kernel module blacklist, sticky `/tmp`, hardened `/dev/shm`, network sysctl, faillock, empty-password lock, disable of telnet/rsh/NIS
 
 ## Requirements
 
@@ -114,6 +115,7 @@ Defaults live in `config/`:
 | `mfa.conf` | TOTP MFA (off by default) |
 | `wazuh.conf` | Manager address only — no keys |
 | `auditd.conf` | auditd rules path and log rotation |
+| `defense.conf` | Active-defense flags (blacklist, sticky /tmp, faillock, service disable) |
 
 Profiles in `profiles/*.conf` enable module sets and override a few role-specific knobs (for example, web-server allows 80/443 and does not disable IP forwarding).
 
@@ -122,22 +124,22 @@ Profiles in `profiles/*.conf` enable module sets and override a few role-specifi
 | ID | What it does |
 | --- | --- |
 | `updates` | Refresh index, security updates, EOL / reboot reporting |
-| `users` | UID 0, empty passwords, home modes — no deletions |
-| `passwords` | `login.defs` / pwquality without breaking enterprise IdP |
+| `users` | Lock empty passwords, umask/TMOUT, 0750 homes — no deletions |
+| `passwords` | login.defs aging, pwquality, faillock lockout |
 | `sudo` | Audit + `visudo -cf` validated drop-in |
 | `ssh` | Drop-in hardening, algorithm set optional |
 | `pam_mfa` | Optional SSH TOTP via PAM |
 | `firewall` | UFW / firewalld / nftables |
-| `services` | Inventory and confirmed disable of known-unnecessary units |
-| `filesystem` | Mount-option audit |
+| `services` | Auto-disable telnet/rsh/NIS/TFTP; confirm avahi/cups |
+| `filesystem` | Sticky `/tmp`, remount `/dev/shm` nodev,nosuid,noexec |
 | `permissions` | Well-defined modes on shadow, sudoers, SSH keys |
-| `kernel` | Info + optional uncommon-protocol blacklist |
+| `kernel` | Blacklist unused protocols/filesystems, disable core dumps, ASLR |
 | `sysctl` | `/etc/sysctl.d/99-server-hardening.conf` |
 | `auditd` | Baseline rules, no duplicate key soup |
 | `logging` | journald / rsyslog / logrotate / log modes |
 | `fail2ban` | SSH jail |
 | `time_sync` | chrony / timesyncd / ntpd |
-| `network` | Listeners, DNS, IPv6 (left enabled) |
+| `network` | SYN cookies, rp_filter, no redirects, host.conf (IPv6 stays on) |
 | `integrity` | AIDE install / init / check |
 | `wazuh` | Optional agent install, configure, register, validate |
 | `compliance` | Unified scored audit |
