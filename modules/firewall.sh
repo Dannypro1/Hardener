@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Firewall hardening with SSH lockout protection.
+# Firewall hardening. Administrator chooses ports and IPs; SSH is never locked out.
 
 _fw_backend() {
   printf '%s' "${FIREWALL_BACKEND:-$FIREWALL_BACKEND_DETECTED}"
@@ -15,6 +15,111 @@ _fw_ssh_port() {
 
 _fw_extra_ports() {
   split_list "${FIREWALL_ALLOWED_PORTS:-}"
+}
+
+_fw_inbound_sources() {
+  split_list "${FIREWALL_INBOUND_SOURCES:-}"
+}
+
+_fw_outbound_ports() {
+  split_list "${FIREWALL_OUTBOUND_PORTS:-}"
+}
+
+_fw_outbound_dests() {
+  split_list "${FIREWALL_OUTBOUND_DESTS:-}"
+}
+
+_fw_port_num() {
+  printf '%s' "${1%%/*}"
+}
+
+_fw_port_proto() {
+  local spec="$1"
+  if [[ "$spec" == */* ]]; then
+    printf '%s' "${spec##*/}"
+  else
+    printf 'tcp'
+  fi
+}
+
+_fw_valid_port() {
+  local spec="$1"
+  local port proto
+  if [[ ! "$spec" =~ ^[0-9]+(/(tcp|udp))?$ ]]; then
+    return 1
+  fi
+  port="$(_fw_port_num "$spec")"
+  proto="$(_fw_port_proto "$spec")"
+  [[ "$port" -ge 1 && "$port" -le 65535 ]] || return 1
+  [[ "$proto" == "tcp" || "$proto" == "udp" ]]
+}
+
+_fw_valid_addr() {
+  local a="$1"
+  [[ "$a" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[12][0-9]|3[0-2]))?$ ]] && return 0
+  # IPv6 must contain a colon so words like "bad" are not accepted.
+  [[ "$a" == *:* && "$a" =~ ^[0-9a-fA-F:]+(/[0-9]{1,3})?$ ]] && return 0
+  return 1
+}
+
+_fw_normalize_list() {
+  local raw="$1"
+  local kind="$2"
+  local out=()
+  local item
+  while IFS= read -r item; do
+    item="$(trim "$item")"
+    [[ -z "$item" ]] && continue
+    if [[ "$kind" == "port" ]]; then
+      _fw_valid_port "$item" || continue
+    else
+      _fw_valid_addr "$item" || continue
+    fi
+    out+=("$item")
+  done < <(split_list "$raw")
+  (IFS=','; printf '%s' "${out[*]}")
+}
+
+_fw_client_ip() {
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    printf '%s' "${SSH_CONNECTION%% *}"
+    return 0
+  fi
+  if [[ -n "${SSH_CLIENT:-}" ]]; then
+    printf '%s' "${SSH_CLIENT%% *}"
+    return 0
+  fi
+  printf ''
+}
+
+_fw_protect_ssh_source() {
+  local client
+  client="$(_fw_client_ip)"
+  [[ -z "$client" ]] && return 0
+  [[ -z "${FIREWALL_INBOUND_SOURCES:-}" ]] && return 0
+  if printf '%s\n' ${FIREWALL_INBOUND_SOURCES//,/ } | grep -qx "$client"; then
+    return 0
+  fi
+  FIREWALL_INBOUND_SOURCES="${client},${FIREWALL_INBOUND_SOURCES}"
+  log_warning "Added current SSH client ${client} to inbound sources to avoid lockout"
+}
+
+_fw_outbound_restricted() {
+  [[ -n "${FIREWALL_OUTBOUND_PORTS:-}" || -n "${FIREWALL_OUTBOUND_DESTS:-}" ]] || \
+    is_false "${FIREWALL_ALLOW_OUTBOUND:-true}"
+}
+
+_fw_show_listeners() {
+  if ! have_cmd ss; then
+    return 0
+  fi
+  ui_box_row "  Listening now:"
+  local line port
+  while IFS= read -r line; do
+    port="$(printf '%s' "$line" | awk '{print $4}' | awk -F: '{print $NF}')"
+    [[ -z "$port" ]] && continue
+    ui_box_row "    ${port}"
+  done < <(ss -lntH 2>/dev/null | head -n 12)
 }
 
 module_firewall_audit() {
@@ -53,26 +158,20 @@ module_firewall_audit() {
       fi
       ;;
   esac
-
-  if have_cmd ss; then
-    local listeners
-    listeners="$(ss -lntH 2>/dev/null | awk '{print $4}' | tr '\n' ',' | sed 's/,$//')"
-    record_finding "Listening Ports" "INFO" "INFO" \
-      "Current TCP listeners" "${listeners:-none}" "Only required services" \
-      "Close unused listeners before tightening the firewall" "CIS Control 12"
-  fi
 }
 
 module_firewall_plan() {
-  local backend sshp
-  backend="$(_fw_backend)"
-  sshp="$(_fw_ssh_port)"
-  printf '  Backend: %s\n' "$backend"
-  printf '  Always allow SSH port %s (current session protected)\n' "$sshp"
-  printf '  Default deny inbound: %s\n' "${FIREWALL_DEFAULT_DENY:-true}"
-  printf '  Extra ports: %s\n' "${FIREWALL_ALLOWED_PORTS:-none}"
-  printf '  Extra services: %s\n' "${FIREWALL_ALLOWED_SERVICES:-none}"
-  printf '  Show proposed rules and require confirmation before apply\n'
+  printf '  Backend: %s\n' "$(_fw_backend)"
+  printf '  SSH port always allowed: %s\n' "$(_fw_ssh_port)"
+  printf '  Inbound ports: %s\n' "${FIREWALL_ALLOWED_PORTS:-SSH only}"
+  printf '  Inbound sources: %s\n' "${FIREWALL_INBOUND_SOURCES:-any}"
+  if _fw_outbound_restricted; then
+    printf '  Outbound: restricted  ports=%s  dests=%s\n' \
+      "${FIREWALL_OUTBOUND_PORTS:-any-port}" "${FIREWALL_OUTBOUND_DESTS:-any-dest}"
+  else
+    printf '  Outbound: allow all\n'
+  fi
+  printf '  Interactive apply asks for ports and IPs unless --non-interactive\n'
 }
 
 _fw_show_proposal() {
@@ -82,26 +181,145 @@ _fw_show_proposal() {
   ui_box_top
   ui_box_center "FIREWALL POLICY  ·  $(_fw_backend)"
   ui_box_sep
-  ui_box_row "  allow inbound TCP ${sshp} (SSH)"
+  ui_box_row "  INBOUND"
+  ui_box_row "    SSH TCP ${sshp}  (always)"
   if [[ "$sshp" != "$SSH_PORT_CURRENT" ]]; then
-    ui_box_row "  allow inbound TCP ${SSH_PORT_CURRENT} (current SSH session port)"
+    ui_box_row "    SSH session TCP ${SSH_PORT_CURRENT}"
   fi
   local p
   while IFS= read -r p; do
     [[ -z "$p" ]] && continue
-    ui_box_row "  allow inbound TCP ${p}"
+    ui_box_row "    allow $(_fw_port_proto "$p")/$(_fw_port_num "$p")"
   done < <(_fw_extra_ports)
-  if [[ -n "${FIREWALL_ALLOWED_SERVICES:-}" ]]; then
-    ui_box_row "  allow services: ${FIREWALL_ALLOWED_SERVICES}"
+  if [[ -n "${FIREWALL_INBOUND_SOURCES:-}" ]]; then
+    ui_box_row "    from ${FIREWALL_INBOUND_SOURCES}"
+  else
+    ui_box_row "    from any address"
   fi
-  if is_true "${FIREWALL_DEFAULT_DENY:-true}"; then
-    ui_box_row "  default deny inbound"
-  fi
-  if is_true "${FIREWALL_ALLOW_OUTBOUND:-true}"; then
-    ui_box_row "  allow outbound"
+  ui_box_sep
+  ui_box_row "  OUTBOUND"
+  if _fw_outbound_restricted; then
+    ui_box_row "    default deny (established replies still allowed)"
+    if [[ -n "${FIREWALL_OUTBOUND_PORTS:-}" ]]; then
+      ui_box_row "    ports ${FIREWALL_OUTBOUND_PORTS}"
+    fi
+    if [[ -n "${FIREWALL_OUTBOUND_DESTS:-}" ]]; then
+      ui_box_row "    destinations ${FIREWALL_OUTBOUND_DESTS}"
+    fi
+  else
+    ui_box_row "    allow all"
   fi
   ui_box_bottom
   printf '\n'
+}
+
+_fw_collect_policy() {
+  if is_true "$NON_INTERACTIVE"; then
+    FIREWALL_ALLOWED_PORTS="$(_fw_normalize_list "${FIREWALL_ALLOWED_PORTS:-}" port)"
+    FIREWALL_INBOUND_SOURCES="$(_fw_normalize_list "${FIREWALL_INBOUND_SOURCES:-}" addr)"
+    FIREWALL_OUTBOUND_PORTS="$(_fw_normalize_list "${FIREWALL_OUTBOUND_PORTS:-}" port)"
+    FIREWALL_OUTBOUND_DESTS="$(_fw_normalize_list "${FIREWALL_OUTBOUND_DESTS:-}" addr)"
+    _fw_protect_ssh_source
+    return 0
+  fi
+
+  printf '\n'
+  ui_box_top
+  ui_box_center "CHOOSE FIREWALL ACCESS"
+  ui_box_sep
+  ui_box_row "  SSH port $(_fw_ssh_port) stays allowed."
+  _fw_show_listeners
+  ui_box_sep
+  ui_box_row "  [1]  SSH only"
+  ui_box_row "  [2]  Web  (80, 443)"
+  ui_box_row "  [3]  Web + custom ports"
+  ui_box_row "  [4]  Custom ports and IPs"
+  ui_box_bottom
+  printf '\n'
+  local preset
+  preset="$(prompt_choice "Choice" 1 4 4)"
+  case "$preset" in
+    1) FIREWALL_ALLOWED_PORTS="" ;;
+    2) FIREWALL_ALLOWED_PORTS="80,443" ;;
+    3) FIREWALL_ALLOWED_PORTS="80,443" ;;
+  esac
+
+  if [[ "$preset" == "3" || "$preset" == "4" ]]; then
+    local ports
+    ports="$(prompt_read "Inbound ports (e.g. 80,443,53/udp)" "${FIREWALL_ALLOWED_PORTS}")"
+    FIREWALL_ALLOWED_PORTS="$(_fw_normalize_list "$ports" port)"
+  fi
+
+  local sources
+  sources="$(prompt_read "Inbound source IPs/CIDRs (empty = any)" "${FIREWALL_INBOUND_SOURCES}")"
+  FIREWALL_INBOUND_SOURCES="$(_fw_normalize_list "$sources" addr)"
+
+  printf '\n'
+  ui_box_top
+  ui_box_center "OUTBOUND POLICY"
+  ui_box_sep
+  ui_box_row "  [1]  Allow all outbound"
+  ui_box_row "  [2]  Allow only listed ports"
+  ui_box_row "  [3]  Allow only listed destination IPs"
+  ui_box_row "  [4]  Allow listed ports to listed IPs"
+  ui_box_row "  [5]  Deny all new outbound (replies still work)"
+  ui_box_bottom
+  printf '\n'
+  local outc
+  outc="$(prompt_choice "Choice" 1 5 1)"
+  FIREWALL_OUTBOUND_PORTS=""
+  FIREWALL_OUTBOUND_DESTS=""
+  FIREWALL_ALLOW_OUTBOUND=true
+  case "$outc" in
+    1) FIREWALL_ALLOW_OUTBOUND=true ;;
+    2)
+      FIREWALL_ALLOW_OUTBOUND=false
+      FIREWALL_OUTBOUND_PORTS="$(_fw_normalize_list "$(prompt_read "Outbound ports (e.g. 80,443,53/udp)" "80,443,53/udp")" port)"
+      ;;
+    3)
+      FIREWALL_ALLOW_OUTBOUND=false
+      FIREWALL_OUTBOUND_DESTS="$(_fw_normalize_list "$(prompt_read "Outbound destination IPs/CIDRs" "")" addr)"
+      ;;
+    4)
+      FIREWALL_ALLOW_OUTBOUND=false
+      FIREWALL_OUTBOUND_PORTS="$(_fw_normalize_list "$(prompt_read "Outbound ports" "80,443,53/udp")" port)"
+      FIREWALL_OUTBOUND_DESTS="$(_fw_normalize_list "$(prompt_read "Outbound destination IPs/CIDRs" "")" addr)"
+      ;;
+    5)
+      FIREWALL_ALLOW_OUTBOUND=false
+      ;;
+  esac
+
+  _fw_protect_ssh_source
+}
+
+_fw_each_inbound_allow() {
+  # Prints: proto port [source]
+  local proto port src
+  local ports=()
+  ports+=("$(_fw_ssh_port)/tcp")
+  if [[ "$(_fw_ssh_port)" != "$SSH_PORT_CURRENT" ]]; then
+    ports+=("${SSH_PORT_CURRENT}/tcp")
+  fi
+  local extra
+  while IFS= read -r extra; do
+    [[ -z "$extra" ]] && continue
+    ports+=("$extra")
+  done < <(_fw_extra_ports)
+
+  local spec
+  for spec in "${ports[@]}"; do
+    proto="$(_fw_port_proto "$spec")"
+    port="$(_fw_port_num "$spec")"
+    if [[ -z "${FIREWALL_INBOUND_SOURCES:-}" ]]; then
+      printf '%s %s\n' "$proto" "$port"
+    else
+      while IFS= read -r src; do
+        [[ -z "$src" ]] && continue
+        printf '%s %s %s\n' "$proto" "$port" "$src"
+      done < <(_fw_inbound_sources)
+    fi
+  done
 }
 
 _fw_apply_ufw() {
@@ -109,37 +327,62 @@ _fw_apply_ufw() {
   have_cmd ufw || { log_error "ufw is not available"; return 1; }
   backup_paths firewall /etc/ufw /etc/default/ufw
 
-  local sshp
-  sshp="$(_fw_ssh_port)"
-  log_action "UFW allow ${sshp}/tcp"
-  if [[ "$sshp" != "$SSH_PORT_CURRENT" ]]; then
-    log_action "UFW allow ${SSH_PORT_CURRENT}/tcp (existing session)"
+  local proto port src
+  while read -r proto port src; do
+    [[ -z "$port" ]] && continue
+    if [[ -n "$src" ]]; then
+      log_action "UFW allow from ${src} to ${port}/${proto}"
+    else
+      log_action "UFW allow ${port}/${proto}"
+    fi
+  done < <(_fw_each_inbound_allow)
+
+  if _fw_outbound_restricted; then
+    log_action "UFW default deny outgoing"
+  else
+    log_action "UFW default allow outgoing"
   fi
-  local p
-  while IFS= read -r p; do
-    [[ -z "$p" ]] && continue
-    log_action "UFW allow ${p}/tcp"
-  done < <(_fw_extra_ports)
-  if is_true "${FIREWALL_DEFAULT_DENY:-true}"; then
-    log_action "UFW default deny incoming"
-  fi
-  log_action "UFW default allow outgoing"
-  log_action "UFW enable"
 
   changes_allowed || return 0
   ufw --force reset >/dev/null 2>&1 || true
   ufw default deny incoming
-  if is_true "${FIREWALL_ALLOW_OUTBOUND:-true}"; then
+  if _fw_outbound_restricted; then
+    ufw default deny outgoing
+  else
     ufw default allow outgoing
   fi
-  ufw allow "${sshp}/tcp" comment "SSH-hardener"
-  if [[ "$sshp" != "$SSH_PORT_CURRENT" ]]; then
-    ufw allow "${SSH_PORT_CURRENT}/tcp" comment "SSH-current-session"
+
+  while read -r proto port src; do
+    [[ -z "$port" ]] && continue
+    if [[ -n "$src" ]]; then
+      ufw allow from "$src" to any port "$port" proto "$proto" comment "hardener-in"
+    else
+      ufw allow "${port}/${proto}" comment "hardener-in"
+    fi
+  done < <(_fw_each_inbound_allow)
+
+  if _fw_outbound_restricted; then
+    local d p
+    if [[ -n "${FIREWALL_OUTBOUND_DESTS:-}" && -n "${FIREWALL_OUTBOUND_PORTS:-}" ]]; then
+      while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
+        while IFS= read -r p; do
+          [[ -z "$p" ]] && continue
+          ufw allow out to "$d" port "$(_fw_port_num "$p")" proto "$(_fw_port_proto "$p")" comment "hardener-out"
+        done < <(_fw_outbound_ports)
+      done < <(_fw_outbound_dests)
+    elif [[ -n "${FIREWALL_OUTBOUND_DESTS:-}" ]]; then
+      while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
+        ufw allow out to "$d" comment "hardener-out"
+      done < <(_fw_outbound_dests)
+    elif [[ -n "${FIREWALL_OUTBOUND_PORTS:-}" ]]; then
+      while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        ufw allow out "$(_fw_port_num "$p")/$(_fw_port_proto "$p")" comment "hardener-out"
+      done < <(_fw_outbound_ports)
+    fi
   fi
-  while IFS= read -r p; do
-    [[ -z "$p" ]] && continue
-    ufw allow "${p}/tcp" comment "hardener-allowed"
-  done < <(_fw_extra_ports)
   ufw --force enable
 }
 
@@ -150,28 +393,55 @@ _fw_apply_firewalld() {
   have_cmd firewall-cmd || { log_error "firewalld is not available"; return 1; }
   backup_paths firewall /etc/firewalld
 
-  local sshp
-  sshp="$(_fw_ssh_port)"
-  log_action "firewalld allow port ${sshp}/tcp"
   changes_allowed || return 0
-
   svc_enable firewalld
   svc_start firewalld
-  firewall-cmd --permanent --add-service=ssh 2>/dev/null || true
-  firewall-cmd --permanent --add-port="${sshp}/tcp"
-  if [[ "$sshp" != "$SSH_PORT_CURRENT" ]]; then
-    firewall-cmd --permanent --add-port="${SSH_PORT_CURRENT}/tcp"
-  fi
-  local p
-  while IFS= read -r p; do
-    [[ -z "$p" ]] && continue
-    firewall-cmd --permanent --add-port="${p}/tcp"
-  done < <(_fw_extra_ports)
+
+  local proto port src
+  while read -r proto port src; do
+    [[ -z "$port" ]] && continue
+    if [[ -n "$src" ]]; then
+      local fam="ipv4"
+      [[ "$src" == *:* ]] && fam="ipv6"
+      log_action "firewalld allow ${fam} ${src} -> ${port}/${proto}"
+      firewall-cmd --permanent --add-rich-rule="rule family=\"${fam}\" source address=\"${src}\" port port=\"${port}\" protocol=\"${proto}\" accept"
+    else
+      log_action "firewalld allow ${port}/${proto}"
+      firewall-cmd --permanent --add-port="${port}/${proto}"
+    fi
+  done < <(_fw_each_inbound_allow)
+
   local svc
   while IFS= read -r svc; do
     [[ -z "$svc" ]] && continue
     firewall-cmd --permanent --add-service="$svc"
   done < <(split_list "${FIREWALL_ALLOWED_SERVICES:-}")
+
+  if _fw_outbound_restricted; then
+    firewall-cmd --permanent --direct --add-rule ipv4 filter OUTPUT 0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    firewall-cmd --permanent --direct --add-rule ipv4 filter OUTPUT 0 -o lo -j ACCEPT
+    local d p
+    if [[ -n "${FIREWALL_OUTBOUND_DESTS:-}" && -n "${FIREWALL_OUTBOUND_PORTS:-}" ]]; then
+      while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
+        while IFS= read -r p; do
+          [[ -z "$p" ]] && continue
+          firewall-cmd --permanent --direct --add-rule ipv4 filter OUTPUT 1 -d "$d" -p "$(_fw_port_proto "$p")" --dport "$(_fw_port_num "$p")" -j ACCEPT
+        done < <(_fw_outbound_ports)
+      done < <(_fw_outbound_dests)
+    elif [[ -n "${FIREWALL_OUTBOUND_DESTS:-}" ]]; then
+      while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
+        firewall-cmd --permanent --direct --add-rule ipv4 filter OUTPUT 1 -d "$d" -j ACCEPT
+      done < <(_fw_outbound_dests)
+    elif [[ -n "${FIREWALL_OUTBOUND_PORTS:-}" ]]; then
+      while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        firewall-cmd --permanent --direct --add-rule ipv4 filter OUTPUT 1 -p "$(_fw_port_proto "$p")" --dport "$(_fw_port_num "$p")" -j ACCEPT
+      done < <(_fw_outbound_ports)
+    fi
+    firewall-cmd --permanent --direct --add-rule ipv4 filter OUTPUT 100 -j DROP
+  fi
   firewall-cmd --reload
 }
 
@@ -182,19 +452,59 @@ _fw_apply_nftables() {
   have_cmd nft || { log_error "nft is not available"; return 1; }
   backup_paths firewall /etc/nftables.conf
 
-  local sshp file
-  sshp="$(_fw_ssh_port)"
-  file="/etc/nftables.d/99-server-hardening.nft"
+  local file="/etc/nftables.d/99-server-hardening.nft"
   mkdir -p /etc/nftables.d 2>/dev/null || true
 
-  local extra=""
-  local p
-  while IFS= read -r p; do
-    [[ -z "$p" ]] && continue
-    extra+="    tcp dport ${p} accept"$'\n'
-  done < <(_fw_extra_ports)
-  if [[ "$sshp" != "$SSH_PORT_CURRENT" ]]; then
-    extra+="    tcp dport ${SSH_PORT_CURRENT} accept"$'\n'
+  local in_rules="" proto port src
+  while read -r proto port src; do
+    [[ -z "$port" ]] && continue
+    if [[ -n "$src" ]]; then
+      if [[ "$src" == *:* ]]; then
+        in_rules+="    ip6 saddr ${src} ${proto} dport ${port} accept"$'\n'
+      else
+        in_rules+="    ip saddr ${src} ${proto} dport ${port} accept"$'\n'
+      fi
+    else
+      in_rules+="    ${proto} dport ${port} accept"$'\n'
+    fi
+  done < <(_fw_each_inbound_allow)
+
+  local out_policy="accept"
+  local out_rules=""
+  if _fw_outbound_restricted; then
+    out_policy="drop"
+    out_rules+="    ct state established,related accept"$'\n'
+    out_rules+="    oif lo accept"$'\n'
+    local d p
+    if [[ -n "${FIREWALL_OUTBOUND_DESTS:-}" && -n "${FIREWALL_OUTBOUND_PORTS:-}" ]]; then
+      while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
+        while IFS= read -r p; do
+          [[ -z "$p" ]] && continue
+          if [[ "$d" == *:* ]]; then
+            out_rules+="    ip6 daddr ${d} $(_fw_port_proto "$p") dport $(_fw_port_num "$p") accept"$'\n'
+          else
+            out_rules+="    ip daddr ${d} $(_fw_port_proto "$p") dport $(_fw_port_num "$p") accept"$'\n'
+          fi
+        done < <(_fw_outbound_ports)
+      done < <(_fw_outbound_dests)
+    elif [[ -n "${FIREWALL_OUTBOUND_DESTS:-}" ]]; then
+      while IFS= read -r d; do
+        [[ -z "$d" ]] && continue
+        if [[ "$d" == *:* ]]; then
+          out_rules+="    ip6 daddr ${d} accept"$'\n'
+        else
+          out_rules+="    ip daddr ${d} accept"$'\n'
+        fi
+      done < <(_fw_outbound_dests)
+    elif [[ -n "${FIREWALL_OUTBOUND_PORTS:-}" ]]; then
+      while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        out_rules+="    $(_fw_port_proto "$p") dport $(_fw_port_num "$p") accept"$'\n'
+      done < <(_fw_outbound_ports)
+    fi
+  else
+    out_rules+="    # unrestricted outbound"$'\n'
   fi
 
   local content
@@ -205,16 +515,15 @@ table inet server_hardener {
     type filter hook input priority 0; policy drop;
     ct state established,related accept
     iif lo accept
-    tcp dport ${sshp} accept
-${extra}    icmp type echo-request accept
+${in_rules}    icmp type echo-request accept
     ip6 nexthdr icmpv6 accept
   }
   chain forward {
     type filter hook forward priority 0; policy drop;
   }
   chain output {
-    type filter hook output priority 0; policy accept;
-  }
+    type filter hook output priority 0; policy ${out_policy};
+${out_rules}  }
 }
 EOF
 )"
@@ -232,6 +541,7 @@ EOF
 module_firewall_apply() {
   announce_defense FIREWALL_DEFAULT_DENY "Firewall default-deny inbound"
   current_ssh_port_protected "$(_fw_ssh_port)" || true
+  _fw_collect_policy
   _fw_show_proposal
 
   if ! is_true "$NON_INTERACTIVE"; then

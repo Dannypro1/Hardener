@@ -1,5 +1,7 @@
 # Linux Server Hardener
 
+**Version 1.0.1** · Author: Danny · [danny.hategekimana@trac.africa](mailto:danny.hategekimana@trac.africa)
+
 A modular Bash toolkit that audits and applies host hardening on Ubuntu, Debian, Fedora, CentOS, RHEL, Rocky Linux, and AlmaLinux.
 
 It is built for real servers — including remote SSH sessions — and prefers **safety, idempotency, backups, validation, rollback, and lockout prevention** over aggressive one-size-fits-all policies.
@@ -147,7 +149,7 @@ Home-directory tightening, USB-storage blacklist, `/tmp` noexec, IPv6 disable, a
 | `sudo` | Audit + `visudo -cf` validated drop-in |
 | `ssh` | Drop-in hardening, algorithm set optional |
 | `pam_mfa` | Optional SSH TOTP via PAM |
-| `firewall` | UFW / firewalld / nftables |
+| `firewall` | UFW / firewalld / nftables — choose inbound/outbound ports and IPs |
 | `services` | Auto-disable telnet/rsh/NIS/TFTP; confirm avahi/cups |
 | `filesystem` | Sticky `/tmp`, remount `/dev/shm` nodev,nosuid,noexec |
 | `permissions` | Well-defined modes on shadow, sudoers, SSH keys |
@@ -203,3 +205,5 @@ This removes `/opt/server-hardener`. It does **not** undo hardening. Roll back f
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Copyright © 2026 Danny (danny.hategekimana@trac.africa).

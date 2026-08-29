@@ -27,8 +27,9 @@ source "${HARDENER_ROOT}/lib/service_manager.sh"
 source "${HARDENER_ROOT}/lib/customize.sh"
 
 usage() {
-  cat <<'EOF'
-Linux Server Hardener
+  cat <<EOF
+${HARDENER_NAME} ${HARDENER_VERSION}
+Author: ${HARDENER_AUTHOR} <${HARDENER_AUTHOR_EMAIL}>
 
 Usage:
   sudo ./harden.sh
@@ -94,7 +95,12 @@ parse_args() {
         ;;
       --yes) REQUIRE_CONFIRMATION="false"; shift ;;
       -h|--help) print_banner; usage; exit 0 ;;
-      -v|--version) print_banner; printf '  %s%s %s%s\n\n' "${C_BGREEN}" "$HARDENER_NAME" "$HARDENER_VERSION" "${C_RESET}"; exit 0 ;;
+      -v|--version)
+        print_banner
+        printf '  %s%s %s%s\n' "${C_BGREEN}" "$HARDENER_NAME" "$HARDENER_VERSION" "${C_RESET}"
+        printf '  Author: %s <%s>\n\n' "$HARDENER_AUTHOR" "$HARDENER_AUTHOR_EMAIL"
+        exit 0
+        ;;
       *) die "Unknown option: $1" ;;
     esac
   done

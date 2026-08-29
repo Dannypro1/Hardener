@@ -2,8 +2,10 @@
 # Shared paths, modes, helpers. Sourced by harden.sh before other libraries.
 # shellcheck disable=SC2034
 
-HARDENER_VERSION="1.0.0"
+HARDENER_VERSION="1.0.1"
 HARDENER_NAME="Linux Server Hardener"
+HARDENER_AUTHOR="Danny"
+HARDENER_AUTHOR_EMAIL="danny.hategekimana@trac.africa"
 
 : "${HARDENER_ROOT:?HARDENER_ROOT must be set before sourcing common.sh}"
 
@@ -402,6 +404,7 @@ EOF
   printf '%s' "${C_GREEN}"
   printf '  ────────────────────────────────────────────────────────────────────────\n'
   printf '  LINUX SERVER HARDENER   v%s   audit · harden · report\n' "${HARDENER_VERSION}"
+  printf '  Author: %s  <%s>\n' "${HARDENER_AUTHOR}" "${HARDENER_AUTHOR_EMAIL}"
   printf '  ────────────────────────────────────────────────────────────────────────\n'
   printf '%s\n' "${C_RESET}"
 }
@@ -416,7 +419,8 @@ print_banner_compact() {
  ██║  ██║██║  ██║██║  ██║██████╔╝███████╗██║ ╚████║███████╗██║  ██║
  ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝
 EOF
-  printf '%s  LINUX SERVER HARDENER  ·  v%s%s\n\n' "${C_GREEN}" "${HARDENER_VERSION}" "${C_RESET}"
+  printf '%s  LINUX SERVER HARDENER  ·  v%s  ·  %s <%s>%s\n\n' \
+    "${C_GREEN}" "${HARDENER_VERSION}" "${HARDENER_AUTHOR}" "${HARDENER_AUTHOR_EMAIL}" "${C_RESET}"
 }
 
 # Redact known secret-like tokens from strings before logging.
