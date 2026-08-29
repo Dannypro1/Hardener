@@ -51,6 +51,7 @@ sudo ./harden.sh --report
 sudo ./harden.sh --profile web-server
 sudo ./harden.sh --profile hardened --non-interactive
 sudo ./harden.sh --modules updates,ssh,firewall --dry-run
+sudo ./harden.sh --set FS_TMP_NOEXEC=true --set USER_TIGHTEN_HOMES=false
 ```
 
 | Mode | Effect |
@@ -118,6 +119,23 @@ Defaults live in `config/`:
 | `defense.conf` | Active-defense flags (blacklist, sticky /tmp, faillock, service disable) |
 
 Profiles in `profiles/*.conf` enable module sets and override a few role-specific knobs (for example, web-server allows 80/443 and does not disable IP forwarding).
+
+## Customize defenses
+
+Interactive runs stop on a **defense options** screen after you pick modules. Each control is listed as ON or OFF. Toggle by number, then press Enter. Apply only runs after that list and the final confirmation.
+
+Nothing is applied quietly. Every selected control is printed again as `Will apply` or `Skipped (turned off)` when the module runs.
+
+Non-interactive example:
+
+```bash
+sudo ./harden.sh --profile server --non-interactive \
+  --set USER_TIGHTEN_HOMES=true \
+  --set KERNEL_BLACKLIST_USB=false \
+  --set FS_TMP_NOEXEC=false
+```
+
+Home-directory tightening, USB-storage blacklist, `/tmp` noexec, IPv6 disable, and system-account nologin start **OFF** unless you turn them on.
 
 ## Modules
 

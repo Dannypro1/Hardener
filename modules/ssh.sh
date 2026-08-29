@@ -185,6 +185,9 @@ module_ssh_plan() {
 }
 
 module_ssh_apply() {
+  announce_defense SSH_DISABLE_ROOT_LOGIN "Disable SSH root login"
+  announce_defense SSH_DISABLE_PASSWORD_AUTH "Disable SSH password authentication"
+  announce_defense SSH_HARDEN_ALGORITHMS "Harden SSH algorithms"
   backup_paths ssh /etc/ssh/sshd_config /etc/ssh/sshd_config.d
 
   if _ssh_would_lock_current_user; then

@@ -79,11 +79,10 @@ module_passwords_audit() {
 }
 
 module_passwords_plan() {
-  printf '  Set login.defs aging MAXDAYS=%s MINDDAYS=%s WARN=%s\n' \
-    "$PW_MAXDAYS" "$PW_MINDAYS" "$PW_WARNAGE"
-  printf '  Write pwquality minlen=%s and complexity credits\n' "$PW_MINLEN"
-  printf '  Write faillock deny=%s unlock=%ss interval=%ss\n' \
-    "$PW_FAILLOCK_DENY" "$PW_FAILLOCK_UNLOCK" "$PW_FAILLOCK_INTERVAL"
+  printf '  Password aging: %s (MAXDAYS=%s)\n' "${PW_APPLY_AGING:-true}" "$PW_MAXDAYS"
+  printf '  pwquality: %s (minlen=%s)\n' "${PW_APPLY_QUALITY:-true}" "$PW_MINLEN"
+  printf '  faillock: %s (deny=%s unlock=%ss)\n' \
+    "${PW_APPLY_FAILLOCK:-true}" "$PW_FAILLOCK_DENY" "$PW_FAILLOCK_UNLOCK"
   printf '  Does not replace enterprise PAM/IdP stacks\n'
 }
 
@@ -136,9 +135,16 @@ EOF
 }
 
 module_passwords_apply() {
-  _pw_install_quality
+  announce_defense PW_APPLY_AGING "Password aging in login.defs"
+  announce_defense PW_APPLY_QUALITY "pwquality complexity rules"
+  announce_defense PW_APPLY_FAILLOCK "faillock after failed logins"
 
-  if [[ -f /etc/login.defs ]]; then
+  if is_true "${PW_APPLY_QUALITY:-true}"; then
+    _pw_install_quality
+    _pw_write_pwquality
+  fi
+
+  if is_true "${PW_APPLY_AGING:-true}" && [[ -f /etc/login.defs ]]; then
     backup_file /etc/login.defs passwords
     if changes_allowed; then
       _pw_set_login_def PASS_MAX_DAYS "$PW_MAXDAYS"
@@ -151,8 +157,9 @@ module_passwords_apply() {
     fi
   fi
 
-  _pw_write_pwquality
-  _pw_write_faillock
+  if is_true "${PW_APPLY_FAILLOCK:-true}"; then
+    _pw_write_faillock
+  fi
 }
 
 module_passwords_validate() {

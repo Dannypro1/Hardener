@@ -138,6 +138,10 @@ _fs_persist_shm() {
 }
 
 module_filesystem_apply() {
+  announce_defense FS_HARDEN_TMP_STICKY "Sticky bit on /tmp and /var/tmp"
+  announce_defense FS_HARDEN_SHM "Harden /dev/shm"
+  announce_defense FS_TMP_NOEXEC "noexec on /tmp"
+
   if is_true "${FS_HARDEN_TMP_STICKY:-true}"; then
     _fs_ensure_sticky /tmp
     _fs_ensure_sticky /var/tmp

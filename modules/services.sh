@@ -84,6 +84,7 @@ module_services_plan() {
 }
 
 module_services_apply() {
+  announce_defense SERVICES_AUTO_DISABLE_DANGEROUS "Disable telnet/rsh/NIS/TFTP"
   local svc
   if is_true "${SERVICES_AUTO_DISABLE_DANGEROUS:-true}"; then
     for svc in $DANGEROUS_SERVICES; do

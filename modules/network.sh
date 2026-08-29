@@ -102,18 +102,21 @@ _net_secure_file() {
 }
 
 module_network_apply() {
-  write_managed_file "$NETWORK_SYSCTL_FILE" 0644 network < <(_net_sysctl_content)
+  announce_defense NETWORK_APPLY_SYSCTL "Network stack sysctl defenses"
+  announce_defense NETWORK_DISABLE_IPV6 "Disable IPv6"
 
-  if [[ -f /etc/host.conf ]] || changes_allowed || is_dry_run; then
-    if [[ -f /etc/host.conf ]]; then
-      backup_file /etc/host.conf network
+  if is_true "${NETWORK_APPLY_SYSCTL:-true}"; then
+    write_managed_file "$NETWORK_SYSCTL_FILE" 0644 network < <(_net_sysctl_content)
+    if [[ -f /etc/host.conf ]] || changes_allowed || is_dry_run; then
+      if [[ -f /etc/host.conf ]]; then
+        backup_file /etc/host.conf network
+      fi
+      write_managed_file /etc/host.conf 0644 network < <(_net_host_conf)
     fi
-    write_managed_file /etc/host.conf 0644 network < <(_net_host_conf)
+    _net_secure_file /etc/hosts 644
+    _net_secure_file /etc/resolv.conf 644
+    _net_secure_file /etc/nsswitch.conf 644
   fi
-
-  _net_secure_file /etc/hosts 644
-  _net_secure_file /etc/resolv.conf 644
-  _net_secure_file /etc/nsswitch.conf 644
 
   if is_true "$NETWORK_DISABLE_IPV6"; then
     log_warning "NETWORK_DISABLE_IPV6=true — writing IPv6 disable sysctl (applications may break)"
@@ -123,11 +126,13 @@ net.ipv6.conf.default.disable_ipv6 = 1
 EOF
   fi
 
-  if changes_allowed && have_cmd sysctl; then
-    sysctl --system >/dev/null 2>&1 || true
-    log_success "Network sysctl defenses applied"
-  else
-    log_action "Would apply network sysctl defenses"
+  if is_true "${NETWORK_APPLY_SYSCTL:-true}" || is_true "$NETWORK_DISABLE_IPV6"; then
+    if changes_allowed && have_cmd sysctl; then
+      sysctl --system >/dev/null 2>&1 || true
+      log_success "Network sysctl defenses applied"
+    else
+      log_action "Would apply network sysctl defenses"
+    fi
   fi
 }
 

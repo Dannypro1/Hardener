@@ -89,10 +89,12 @@ module_users_audit() {
 }
 
 module_users_plan() {
-  printf '  Lock empty-password accounts (USER_LOCK_EMPTY_PASSWORDS=%s)\n' "${USER_LOCK_EMPTY_PASSWORDS:-true}"
-  printf '  Set umask %s and TMOUT=%s via profile.d\n' "${USER_UMASK:-027}" "${USER_TMOUT:-900}"
-  printf '  Tighten home directories to 0750 (USER_TIGHTEN_HOMES=%s)\n' "${USER_TIGHTEN_HOMES:-true}"
-  printf '  Never delete users automatically\n'
+  printf '  Lock empty-password accounts: %s\n' "${USER_LOCK_EMPTY_PASSWORDS:-true}"
+  printf '  Set umask %s: %s\n' "${USER_UMASK:-027}" "${USER_SET_UMASK:-true}"
+  printf '  Set TMOUT %s: %s\n' "${USER_TMOUT:-900}" "${USER_SET_TMOUT:-false}"
+  printf '  Tighten home directories: %s\n' "${USER_TIGHTEN_HOMES:-false}"
+  printf '  nologin on system accounts: %s\n' "${USER_NOLOGIN_SYSTEM:-false}"
+  printf '  Never delete users\n'
 }
 
 _users_lock_account() {
@@ -105,29 +107,30 @@ _users_lock_account() {
 
 _users_apply_umask_tmout() {
   local umask_val="${USER_UMASK:-027}"
-  write_managed_file /etc/profile.d/99-server-hardening-umask.sh 0644 users <<EOF
+  if is_true "${USER_SET_UMASK:-true}" && [[ -n "$umask_val" ]]; then
+    write_managed_file /etc/profile.d/99-server-hardening-umask.sh 0644 users <<EOF
 # Managed by Server Hardener
 umask ${umask_val}
 EOF
-
-  if [[ -f /etc/login.defs ]]; then
-    backup_file /etc/login.defs users
-    if changes_allowed; then
-      if grep -qE '^UMASK[[:space:]]' /etc/login.defs; then
-        sed -i -E "s/^UMASK[[:space:]]+.*/UMASK\t${umask_val}/" /etc/login.defs
+    if [[ -f /etc/login.defs ]]; then
+      backup_file /etc/login.defs users
+      if changes_allowed; then
+        if grep -qE '^UMASK[[:space:]]' /etc/login.defs; then
+          sed -i -E "s/^UMASK[[:space:]]+.*/UMASK\t${umask_val}/" /etc/login.defs
+        else
+          printf 'UMASK\t%s\n' "$umask_val" >> /etc/login.defs
+        fi
       else
-        printf 'UMASK\t%s\n' "$umask_val" >> /etc/login.defs
+        log_action "Would set UMASK ${umask_val} in login.defs"
       fi
-    else
-      log_action "Would set UMASK ${umask_val} in login.defs"
     fi
   fi
 
   local tmout="${USER_TMOUT:-900}"
-  if [[ "$tmout" != "0" && -n "$tmout" ]]; then
+  if is_true "${USER_SET_TMOUT:-false}" && [[ "$tmout" != "0" && -n "$tmout" ]]; then
     write_managed_file /etc/profile.d/99-server-hardening-tmout.sh 0644 users <<EOF
 # Managed by Server Hardener — idle shell timeout (seconds)
-readonly TMOUT=${tmout}
+TMOUT=${tmout}
 export TMOUT
 EOF
   fi
@@ -153,11 +156,17 @@ _users_nologin_system() {
 }
 
 module_users_apply() {
+  announce_defense USER_LOCK_EMPTY_PASSWORDS "Lock empty-password accounts"
+  announce_defense USER_TIGHTEN_HOMES "Tighten home directories to 0750"
+  announce_defense USER_SET_UMASK "Set umask ${USER_UMASK:-027}"
+  announce_defense USER_SET_TMOUT "Set TMOUT=${USER_TMOUT:-900}"
+  announce_defense USER_NOLOGIN_SYSTEM "nologin on known system accounts"
+
   local acct
   while IFS= read -r acct; do
     [[ -z "$acct" ]] && continue
     if is_false "${USER_LOCK_EMPTY_PASSWORDS:-true}"; then
-      log_warning "Left empty-password account unchanged: ${acct}"
+      log_info "Skipped lock of ${acct} (option is off)"
       continue
     fi
     if is_true "$NON_INTERACTIVE"; then
@@ -169,7 +178,7 @@ module_users_apply() {
     fi
   done < <(_users_empty_password)
 
-  if is_true "${USER_TIGHTEN_HOMES:-true}"; then
+  if is_true "${USER_TIGHTEN_HOMES:-false}"; then
     local user homedir uid mode
     while IFS=: read -r user _ uid _ _ homedir _; do
       [[ "$uid" -lt 1000 && "$user" != "root" ]] && continue
@@ -186,7 +195,10 @@ module_users_apply() {
   fi
 
   _users_apply_umask_tmout
-  _users_nologin_system
+
+  if is_true "${USER_NOLOGIN_SYSTEM:-false}"; then
+    _users_nologin_system
+  fi
 }
 
 module_users_validate() {

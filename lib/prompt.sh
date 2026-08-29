@@ -77,7 +77,7 @@ prompt_confirm_dangerous() {
 }
 
 show_module_menu() {
-  print_banner
+  print_banner_compact
   ui_box_top
   ui_box_row "OPERATING SYSTEM"
   ui_box_sep

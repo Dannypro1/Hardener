@@ -31,6 +31,7 @@ module_fail2ban_plan() {
 }
 
 module_fail2ban_apply() {
+  announce_defense FAIL2BAN_ENABLED "Fail2ban SSH jail"
   if is_false "$FAIL2BAN_ENABLED"; then
     log_info "Fail2ban disabled in configuration"
     return 0

@@ -230,6 +230,7 @@ EOF
 }
 
 module_firewall_apply() {
+  announce_defense FIREWALL_DEFAULT_DENY "Firewall default-deny inbound"
   current_ssh_port_protected "$(_fw_ssh_port)" || true
   _fw_show_proposal
 

@@ -23,6 +23,8 @@ source "${HARDENER_ROOT}/lib/validation.sh"
 source "${HARDENER_ROOT}/lib/rollback.sh"
 # shellcheck source=lib/service_manager.sh
 source "${HARDENER_ROOT}/lib/service_manager.sh"
+# shellcheck source=lib/customize.sh
+source "${HARDENER_ROOT}/lib/customize.sh"
 
 usage() {
   cat <<'EOF'
@@ -49,7 +51,9 @@ Options:
   --profile NAME       Use a predefined profile: basic, server, web-server,
                        database-server, hardened.
   --modules LIST       Comma-separated module ids or menu numbers.
-  --non-interactive    Do not prompt. Uses profile/module defaults.
+  --non-interactive    Do not prompt. Uses profile/module defaults and --set.
+  --set NAME=value     Turn a defense on or off (repeatable). Example:
+                       --set FS_TMP_NOEXEC=true --set USER_TIGHTEN_HOMES=false
   --yes                Same as answering yes to the final apply prompt
                        (still refuses dangerous MFA/user-deletion actions).
   -h, --help           Show this help.
@@ -64,6 +68,7 @@ EOF
 
 parse_args() {
   local modules_arg=""
+  local set_args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --audit) MODE="audit"; shift ;;
@@ -82,6 +87,11 @@ parse_args() {
         shift 2
         ;;
       --non-interactive) NON_INTERACTIVE="true"; shift ;;
+      --set)
+        [[ -n "${2:-}" ]] || die "--set requires NAME=value"
+        set_args+=("$2")
+        shift 2
+        ;;
       --yes) REQUIRE_CONFIRMATION="false"; shift ;;
       -h|--help) print_banner; usage; exit 0 ;;
       -v|--version) print_banner; printf '  %s%s %s%s\n\n' "${C_BGREEN}" "$HARDENER_NAME" "$HARDENER_VERSION" "${C_RESET}"; exit 0 ;;
@@ -91,6 +101,10 @@ parse_args() {
   if [[ -n "$modules_arg" ]]; then
     parse_module_selection "$modules_arg"
   fi
+  local spec
+  for spec in "${set_args[@]+"${set_args[@]}"}"; do
+    parse_set_option "$spec"
+  done
 }
 
 source_module() {
@@ -136,6 +150,7 @@ print_plan() {
   ui_box_kv "Profile" "${PROFILE_NAME_SELECTED:-none}"
   ui_box_kv "Modules" "${SELECTED_MODULES[*]}"
   ui_box_bottom
+  print_defense_summary
   local id
   for id in "${SELECTED_MODULES[@]}"; do
     ui_section "$(module_label "$id")"
@@ -218,6 +233,7 @@ main() {
     source_module "$id"
   done
 
+  customize_defenses
   run_pre_audit
   print_plan
   confirm_plan

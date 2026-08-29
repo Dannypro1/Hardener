@@ -83,10 +83,11 @@ module_kernel_plan() {
 }
 
 module_kernel_apply() {
+  announce_defense KERNEL_BLACKLIST_UNCOMMON "Blacklist unused network/FS modules"
+  announce_defense KERNEL_BLACKLIST_USB "Blacklist USB storage"
+
   if is_true "${KERNEL_BLACKLIST_UNCOMMON:-true}"; then
     write_managed_file "$KERNEL_MODPROBE_FILE" 0644 kernel < <(_kernel_modprobe_content)
-  else
-    log_info "Kernel module blacklist skipped (KERNEL_BLACKLIST_UNCOMMON=false)"
   fi
 
   write_managed_file "$KERNEL_LIMITS_FILE" 0644 kernel <<'EOF'
