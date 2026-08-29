@@ -1,0 +1,26 @@
+# Runtime data — never commit
+logs/
+!logs/.gitkeep
+backups/
+!backups/.gitkeep
+reports/
+!reports/.gitkeep
+
+# Secrets and local overrides
+*.secret
+*.key
+*.pem
+google_authenticator
+*google-authenticator*
+ossec.conf.local
+local_internal_options.conf
+
+# Editor / OS noise
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.tmp
