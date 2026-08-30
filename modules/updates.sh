@@ -47,14 +47,38 @@ module_updates_audit() {
 module_updates_plan() {
   printf '  Refresh package index via %s\n' "$PKG_MGR"
   printf '  Apply security updates\n'
+  printf '  Unattended upgrades (Debian/Ubuntu): %s\n' "${UNATTENDED_UPGRADES:-false}"
   printf '  Report kernel %s\n' "$(uname -r 2>/dev/null || echo unknown)"
   printf '  Recommend removal of high-risk unused packages (no automatic removal)\n'
   printf '  Never reboot unless AUTO_REBOOT=true (currently %s)\n' "${AUTO_REBOOT:-false}"
 }
 
+_updates_unattended() {
+  announce_defense UNATTENDED_UPGRADES "Automatic security updates (unattended-upgrades)"
+  if is_false "${UNATTENDED_UPGRADES:-false}"; then
+    return 0
+  fi
+  if [[ "$(os_family)" != "debian" ]]; then
+    log_info "Unattended-upgrades is Debian/Ubuntu only; skip on this OS"
+    return 0
+  fi
+  install_package unattended-upgrades || {
+    log_warning "unattended-upgrades is not available"
+    return 0
+  }
+  local dest="/etc/apt/apt.conf.d/20auto-upgrades"
+  backup_file "$dest" updates 2>/dev/null || true
+  write_managed_file "$dest" 0644 updates <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+}
+
 module_updates_apply() {
   update_package_index
   upgrade_packages true
+  _updates_unattended
 
   local pkg
   for pkg in ${UNNECESSARY_PACKAGES:-}; do

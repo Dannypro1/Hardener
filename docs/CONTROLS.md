@@ -11,8 +11,8 @@ Recommendations in this toolkit are aligned with widely used guidance. They are
 | Time sync | `modules/time_sync.sh` | CIS 1.3, NIST AU-8 |
 | Unnecessary services | `modules/services.sh` | CIS 2.2, CIS Control 4 |
 | Network sysctl | `modules/sysctl.sh` | CIS 3.1, CIS 3.3 |
-| Host firewall | `modules/firewall.sh` | CIS 3.5, CIS Control 12 |
-| auditd | `modules/auditd.sh` | CIS 4.1, NIST AU-2 |
+| Host firewall | `modules/firewall.sh` (sourced UI, open discovery) | CIS 3.5, CIS Control 12 |
+| auditd | `modules/auditd.sh` (identity + root execve) | CIS 4.1, NIST AU-2 |
 | Logging | `modules/logging.sh` | CIS 4.2, CIS 4.3 |
 | SSH | `modules/ssh.sh` | CIS 5.1, NIST IA-2 |
 | PAM / passwords | `modules/passwords.sh`, `modules/pam_mfa.sh` | CIS 5.3, NIST IA-5, IA-2(1) |
@@ -32,3 +32,4 @@ Recommendations in this toolkit are aligned with widely used guidance. They are
 - No password authentication disable by default
 - No MFA enablement without confirmation
 - No Wazuh registration keys in source or logs
+- No passwords copied from ubuntu/root or sent to Slack

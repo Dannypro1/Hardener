@@ -27,6 +27,43 @@ _wazuh_ossec_conf() {
   fi
 }
 
+_wazuh_agent_name() {
+  printf '%s' "${WAZUH_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}"
+}
+
+_wazuh_collect_audit() {
+  local conf
+  conf="$(_wazuh_ossec_conf)"
+  [[ -n "$conf" && -f "$conf" ]] || return 0
+  if is_false "${WAZUH_COLLECT_AUDIT:-true}"; then
+    return 0
+  fi
+  if grep -q '<location>/var/log/audit/audit.log</location>' "$conf"; then
+    log_info "Wazuh already collects /var/log/audit/audit.log"
+    return 0
+  fi
+  backup_file "$conf" wazuh
+  log_action "Add auditd localfile to ossec.conf"
+  if ! changes_allowed; then
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  awk '
+    /<\/ossec_config>/ && !done {
+      print "  <localfile>"
+      print "    <log_format>audit</log_format>"
+      print "    <location>/var/log/audit/audit.log</location>"
+      print "  </localfile>"
+      done=1
+    }
+    { print }
+  ' "$conf" > "$tmp"
+  mv "$tmp" "$conf"
+  chmod 0640 "$conf"
+  chown root:wazuh "$conf" 2>/dev/null || chown root:root "$conf"
+}
+
 module_wazuh_audit() {
   if _wazuh_installed; then
     local state="unknown"
@@ -55,7 +92,8 @@ module_wazuh_audit() {
 
 module_wazuh_plan() {
   printf '  Optional Wazuh agent (not assumed local manager)\n'
-  printf '  Manager: %s  Agent name: %s\n' "${WAZUH_MANAGER:-ask}" "${WAZUH_AGENT_NAME:-hostname}"
+  printf '  Manager: %s  Agent name: %s\n' "${WAZUH_MANAGER:-ask}" "$(_wazuh_agent_name)"
+  printf '  Collect audit.log: %s\n' "${WAZUH_COLLECT_AUDIT:-true}"
   printf '  Registration secrets are never written to logs\n'
 }
 
@@ -112,6 +150,8 @@ _wazuh_install() {
         fi
         printf 'deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main\n' \
           > /etc/apt/sources.list.d/wazuh.list
+        export WAZUH_MANAGER="${WAZUH_MANAGER}"
+        export WAZUH_AGENT_NAME="$(_wazuh_agent_name)"
         update_package_index
         install_package wazuh-agent
       fi
@@ -119,6 +159,8 @@ _wazuh_install() {
     rhel)
       log_action "Add Wazuh yum/dnf repository and install wazuh-agent"
       if changes_allowed; then
+        export WAZUH_MANAGER="${WAZUH_MANAGER}"
+        export WAZUH_AGENT_NAME="$(_wazuh_agent_name)"
         cat > /etc/yum.repos.d/wazuh.repo <<'EOF'
 [wazuh]
 name=Wazuh repository
@@ -147,7 +189,7 @@ _wazuh_configure() {
     return 1
   fi
   WAZUH_MANAGER="$(prompt_read "Wazuh manager address" "${WAZUH_MANAGER}")"
-  WAZUH_AGENT_NAME="$(prompt_read "Agent name" "${WAZUH_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}")"
+  WAZUH_AGENT_NAME="$(prompt_read "Agent name" "$(_wazuh_agent_name)")"
   WAZUH_PORT="$(prompt_read "Manager port" "${WAZUH_PORT:-1514}")"
   if [[ -z "$WAZUH_MANAGER" ]]; then
     log_error "Manager address is required"
@@ -165,6 +207,7 @@ _wazuh_configure() {
     chmod 0640 "$conf"
     chown root:wazuh "$conf" 2>/dev/null || chown root:root "$conf"
   fi
+  _wazuh_collect_audit
 }
 
 _wazuh_register() {
@@ -175,7 +218,7 @@ _wazuh_register() {
   local manager
   manager="$(prompt_read "Registration / manager address" "${WAZUH_REGISTRATION_SERVER:-$WAZUH_MANAGER}")"
   local name
-  name="$(prompt_read "Agent name" "${WAZUH_AGENT_NAME:-$(hostname -s 2>/dev/null || hostname)}")"
+  name="$(prompt_read "Agent name" "$(_wazuh_agent_name)")"
   if [[ -z "$manager" ]]; then
     log_error "Registration server is required"
     return 1
@@ -240,7 +283,18 @@ module_wazuh_apply() {
   choice="$(_wazuh_menu)"
   case "$choice" in
     1) _wazuh_check_existing ;;
-    2) _wazuh_install ;;
+    2)
+      _wazuh_install
+      if [[ -n "${WAZUH_MANAGER:-}" ]]; then
+        _wazuh_configure
+      fi
+      _wazuh_collect_audit
+      if changes_allowed; then
+        have_cmd systemctl && systemctl daemon-reload || true
+        svc_enable wazuh-agent || true
+        svc_start wazuh-agent || svc_restart wazuh-agent || true
+      fi
+      ;;
     3) _wazuh_configure ;;
     4) _wazuh_register ;;
     5) _wazuh_validate_now ;;
@@ -249,13 +303,18 @@ module_wazuh_apply() {
   if is_true "$NON_INTERACTIVE" && is_true "${WAZUH_ENABLED:-false}"; then
     _wazuh_install
     _wazuh_configure
+    _wazuh_collect_audit
     if [[ -n "${WAZUH_REGISTRATION_PASSWORD:-}" ]]; then
       _wazuh_register
     else
       log_warning "Non-interactive Wazuh install without WAZUH_REGISTRATION_PASSWORD — register later"
     fi
+    if changes_allowed; then
+      have_cmd systemctl && systemctl daemon-reload || true
+    fi
     svc_enable wazuh-agent || true
-    svc_start wazuh-agent || true
+    svc_start wazuh-agent || svc_restart wazuh-agent || true
+    log_info "Check /var/ossec/logs/ossec.log for a successful manager connection"
   fi
 }
 

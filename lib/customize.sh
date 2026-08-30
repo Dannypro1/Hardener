@@ -9,6 +9,9 @@ DEFENSE_CATALOG=(
   "umask|users|USER_SET_UMASK|Set umask 027 for new files"
   "tmout|users|USER_SET_TMOUT|Set shell idle timeout (TMOUT)"
   "nologin_sys|users|USER_NOLOGIN_SYSTEM|Force nologin on known system accounts"
+  "ensure_ssh|users|USER_ENSURE_SSH_USERS|Create AllowUsers accounts (password prompted, never logged)"
+  "nologin_extra|users|USER_NOLOGIN_EXTRA|nologin extra humans not in AllowUsers"
+  "unattended|updates|UNATTENDED_UPGRADES|Automatic security updates (Debian/Ubuntu)"
   "aging|passwords|PW_APPLY_AGING|Set password aging in login.defs"
   "pwquality|passwords|PW_APPLY_QUALITY|Configure password quality (pwquality)"
   "faillock|passwords|PW_APPLY_FAILLOCK|Configure faillock after failed logins"
@@ -121,7 +124,7 @@ parse_set_option() {
   local var="${spec%%=*}"
   local val="${spec#*=}"
   case "$var" in
-    USER_*|PW_*|SSH_*|FS_*|KERNEL_*|NETWORK_*|SERVICES_*|FAIL2BAN_*|FIREWALL_*|MFA_*|WAZUH_*|AUTO_REBOOT|SYSCTL_*)
+    USER_*|PW_*|SSH_*|FS_*|KERNEL_*|NETWORK_*|SERVICES_*|FAIL2BAN_*|FIREWALL_*|MFA_*|WAZUH_*|AUTO_REBOOT|SYSCTL_*|UNATTENDED_*)
       set_defense_flag "$var" "$val"
       log_info "Set ${var}=${val}"
       ;;

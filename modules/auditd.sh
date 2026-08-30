@@ -61,6 +61,10 @@ _auditd_rules() {
 -a always,exit -F arch=b64 -S setuid,setgid,setreuid,setregid,setresuid,setresgid -F auid>=1000 -F auid!=4294967295 -k priv-esc
 -a always,exit -F arch=b32 -S setuid,setgid,setreuid,setregid,setresuid,setresgid -F auid>=1000 -F auid!=4294967295 -k priv-esc
 
+# Privileged commands (euid=0)
+-a always,exit -F arch=b64 -S execve -F euid=0 -k root_commands
+-a always,exit -F arch=b32 -S execve -F euid=0 -k root_commands
+
 # Unsuccessful file access
 -a always,exit -F arch=b64 -S open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access
 -a always,exit -F arch=b64 -S open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=4294967295 -k access

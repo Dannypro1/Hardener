@@ -33,6 +33,15 @@ EOF
   fi
   if is_true "${SSH_DISABLE_PASSWORD_AUTH:-false}"; then
     printf 'PasswordAuthentication no\n'
+  else
+    printf 'PasswordAuthentication yes\n'
+  fi
+  if is_true "${SSH_PUBKEY_AUTHENTICATION:-true}"; then
+    printf 'PubkeyAuthentication yes\n'
+  fi
+  if is_false "${SSH_CHALLENGE_RESPONSE:-false}"; then
+    printf 'KbdInteractiveAuthentication no\n'
+    printf 'ChallengeResponseAuthentication no\n'
   fi
   if is_false "${SSH_PERMIT_EMPTY_PASSWORDS:-false}"; then
     printf 'PermitEmptyPasswords no\n'
@@ -121,6 +130,26 @@ _ssh_would_lock_current_user() {
   return 1
 }
 
+_ssh_protect_current_user() {
+  local user="${CURRENT_SSH_USER:-}"
+  [[ -z "$user" || "$IS_SSH_SESSION" != "true" ]] && return 0
+  [[ -z "${SSH_ALLOW_USERS:-}" ]] && return 0
+  if printf '%s\n' ${SSH_ALLOW_USERS//,/ } | grep -qx "$user"; then
+    return 0
+  fi
+  SSH_ALLOW_USERS="${SSH_ALLOW_USERS},${user}"
+  log_warning "Added current SSH user ${user} to AllowUsers to avoid lockout"
+}
+
+_ssh_verify_effective() {
+  if ! have_cmd sshd; then
+    return 0
+  fi
+  log_info "Effective sshd -T (permitrootlogin / passwordauthentication / pubkeyauthentication):"
+  sshd -T 2>/dev/null | grep -iE 'permitrootlogin|passwordauthentication|pubkeyauthentication' || true
+  log_warning "Keep this session open. Test a second SSH login, and keep console access, before you disconnect."
+}
+
 _ssh_target_port() {
   if [[ -n "${SSH_PORT:-}" ]]; then
     printf '%s' "$SSH_PORT"
@@ -175,9 +204,11 @@ module_ssh_plan() {
   printf '  Backup /etc/ssh/sshd_config and sshd_config.d\n'
   printf '  Write drop-in %s (sshd_config is not overwritten)\n' "$SSH_MANAGED_DROPIN"
   printf '  Target SSH port: %s (current %s)\n' "$(_ssh_target_port)" "$SSH_PORT_CURRENT"
-  printf '  PermitRootLogin=%s  PasswordAuthentication disable=%s\n' \
-    "${SSH_DISABLE_ROOT_LOGIN}" "${SSH_DISABLE_PASSWORD_AUTH}"
-  printf '  Validate with sshd -t before reload\n'
+  printf '  PermitRootLogin=no  PasswordAuthentication=%s  PubkeyAuthentication=yes\n' \
+    "$(is_true "${SSH_DISABLE_PASSWORD_AUTH:-false}" && echo no || echo yes)"
+  printf '  AllowUsers: %s\n' "${SSH_ALLOW_USERS:-unrestricted}"
+  printf '  ChallengeResponseAuthentication no  MaxAuthTries=%s\n' "${SSH_MAX_AUTH_TRIES:-3}"
+  printf '  Validate with sshd -t; verify with sshd -T before relying on the new session\n'
   if [[ "$IS_SSH_SESSION" == "true" ]]; then
     printf '  %sRemote SSH session — current user %s and port %s will be protected%s\n' \
       "${C_YELLOW}" "${CURRENT_SSH_USER}" "$SSH_PORT_CURRENT" "${C_RESET}"
@@ -189,6 +220,7 @@ module_ssh_apply() {
   announce_defense SSH_DISABLE_PASSWORD_AUTH "Disable SSH password authentication"
   announce_defense SSH_HARDEN_ALGORITHMS "Harden SSH algorithms"
   backup_paths ssh /etc/ssh/sshd_config /etc/ssh/sshd_config.d
+  _ssh_protect_current_user
 
   if _ssh_would_lock_current_user; then
     log_error "${SSH_LOCKOUT_REASON}"
@@ -245,6 +277,7 @@ module_ssh_apply() {
 
   current_ssh_port_protected "$target_port" || true
   svc_reload "$SSH_SERVICE"
+  _ssh_verify_effective
 }
 
 module_ssh_validate() {

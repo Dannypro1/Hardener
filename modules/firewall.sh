@@ -17,8 +17,28 @@ _fw_extra_ports() {
   split_list "${FIREWALL_ALLOWED_PORTS:-}"
 }
 
+_fw_open_ports() {
+  split_list "${FIREWALL_OPEN_PORTS:-}"
+}
+
 _fw_inbound_sources() {
   split_list "${FIREWALL_INBOUND_SOURCES:-}"
+}
+
+# Restricted (sourced) vs discovery (any). Empty lists are filled from the role.
+_fw_apply_role() {
+  case "${FIREWALL_ROLE:-generic}" in
+    unifi)
+      FIREWALL_ALLOWED_PORTS="${FIREWALL_ALLOWED_PORTS:-8443/tcp,443/tcp,8843/tcp,8880/tcp}"
+      FIREWALL_OPEN_PORTS="${FIREWALL_OPEN_PORTS:-3478/udp,10001/udp,1900/udp,8080/tcp,6789/tcp}"
+      ;;
+    rpki)
+      FIREWALL_ALLOWED_PORTS="${FIREWALL_ALLOWED_PORTS:-443/tcp,8323/tcp,3323/tcp}"
+      FIREWALL_OPEN_PORTS="${FIREWALL_OPEN_PORTS:-}"
+      ;;
+    generic|*)
+      ;;
+  esac
 }
 
 _fw_outbound_ports() {
@@ -161,10 +181,13 @@ module_firewall_audit() {
 }
 
 module_firewall_plan() {
+  _fw_apply_role
   printf '  Backend: %s\n' "$(_fw_backend)"
+  printf '  Role: %s\n' "${FIREWALL_ROLE:-generic}"
   printf '  SSH port always allowed: %s\n' "$(_fw_ssh_port)"
-  printf '  Inbound ports: %s\n' "${FIREWALL_ALLOWED_PORTS:-SSH only}"
-  printf '  Inbound sources: %s\n' "${FIREWALL_INBOUND_SOURCES:-any}"
+  printf '  Restricted ports (sourced): %s\n' "${FIREWALL_ALLOWED_PORTS:-SSH only}"
+  printf '  Discovery ports (any source): %s\n' "${FIREWALL_OPEN_PORTS:-none}"
+  printf '  Inbound sources for SSH/UI: %s\n' "${FIREWALL_INBOUND_SOURCES:-any}"
   if _fw_outbound_restricted; then
     printf '  Outbound: restricted  ports=%s  dests=%s\n' \
       "${FIREWALL_OUTBOUND_PORTS:-any-port}" "${FIREWALL_OUTBOUND_DESTS:-any-dest}"
@@ -189,13 +212,17 @@ _fw_show_proposal() {
   local p
   while IFS= read -r p; do
     [[ -z "$p" ]] && continue
-    ui_box_row "    allow $(_fw_port_proto "$p")/$(_fw_port_num "$p")"
+    ui_box_row "    UI/admin $(_fw_port_proto "$p")/$(_fw_port_num "$p")  (sourced)"
   done < <(_fw_extra_ports)
   if [[ -n "${FIREWALL_INBOUND_SOURCES:-}" ]]; then
-    ui_box_row "    from ${FIREWALL_INBOUND_SOURCES}"
+    ui_box_row "    SSH/UI from ${FIREWALL_INBOUND_SOURCES}"
   else
-    ui_box_row "    from any address"
+    ui_box_row "    SSH/UI from any address"
   fi
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    ui_box_row "    discovery $(_fw_port_proto "$p")/$(_fw_port_num "$p")  (any source)"
+  done < <(_fw_open_ports)
   ui_box_sep
   ui_box_row "  OUTBOUND"
   if _fw_outbound_restricted; then
@@ -214,8 +241,10 @@ _fw_show_proposal() {
 }
 
 _fw_collect_policy() {
+  _fw_apply_role
   if is_true "$NON_INTERACTIVE"; then
     FIREWALL_ALLOWED_PORTS="$(_fw_normalize_list "${FIREWALL_ALLOWED_PORTS:-}" port)"
+    FIREWALL_OPEN_PORTS="$(_fw_normalize_list "${FIREWALL_OPEN_PORTS:-}" port)"
     FIREWALL_INBOUND_SOURCES="$(_fw_normalize_list "${FIREWALL_INBOUND_SOURCES:-}" addr)"
     FIREWALL_OUTBOUND_PORTS="$(_fw_normalize_list "${FIREWALL_OUTBOUND_PORTS:-}" port)"
     FIREWALL_OUTBOUND_DESTS="$(_fw_normalize_list "${FIREWALL_OUTBOUND_DESTS:-}" addr)"
@@ -228,30 +257,56 @@ _fw_collect_policy() {
   ui_box_center "CHOOSE FIREWALL ACCESS"
   ui_box_sep
   ui_box_row "  SSH port $(_fw_ssh_port) stays allowed."
+  ui_box_row "  UI/admin ports are sourced. Discovery ports stay open."
   _fw_show_listeners
   ui_box_sep
   ui_box_row "  [1]  SSH only"
   ui_box_row "  [2]  Web  (80, 443)"
   ui_box_row "  [3]  Web + custom ports"
   ui_box_row "  [4]  Custom ports and IPs"
+  ui_box_row "  [5]  UniFi OS  (web sourced, AP discovery open)"
+  ui_box_row "  [6]  RPKI  (relevant ports sourced only)"
   ui_box_bottom
   printf '\n'
   local preset
-  preset="$(prompt_choice "Choice" 1 4 4)"
+  preset="$(prompt_choice "Choice" 1 6 4)"
   case "$preset" in
-    1) FIREWALL_ALLOWED_PORTS="" ;;
-    2) FIREWALL_ALLOWED_PORTS="80,443" ;;
-    3) FIREWALL_ALLOWED_PORTS="80,443" ;;
+    1)
+      FIREWALL_ROLE="generic"
+      FIREWALL_ALLOWED_PORTS=""
+      FIREWALL_OPEN_PORTS=""
+      ;;
+    2)
+      FIREWALL_ROLE="generic"
+      FIREWALL_ALLOWED_PORTS="80,443"
+      FIREWALL_OPEN_PORTS=""
+      ;;
+    3)
+      FIREWALL_ROLE="generic"
+      FIREWALL_ALLOWED_PORTS="80,443"
+      ;;
+    5)
+      FIREWALL_ROLE="unifi"
+      FIREWALL_ALLOWED_PORTS="8443/tcp,443/tcp,8843/tcp,8880/tcp"
+      FIREWALL_OPEN_PORTS="3478/udp,10001/udp,1900/udp,8080/tcp,6789/tcp"
+      ;;
+    6)
+      FIREWALL_ROLE="rpki"
+      FIREWALL_ALLOWED_PORTS="443/tcp,8323/tcp,3323/tcp"
+      FIREWALL_OPEN_PORTS=""
+      ;;
   esac
 
   if [[ "$preset" == "3" || "$preset" == "4" ]]; then
     local ports
-    ports="$(prompt_read "Inbound ports (e.g. 80,443,53/udp)" "${FIREWALL_ALLOWED_PORTS}")"
+    ports="$(prompt_read "Restricted inbound ports (sourced, e.g. 80,443,8443/tcp)" "${FIREWALL_ALLOWED_PORTS}")"
     FIREWALL_ALLOWED_PORTS="$(_fw_normalize_list "$ports" port)"
+    ports="$(prompt_read "Discovery ports from any source (empty = none)" "${FIREWALL_OPEN_PORTS}")"
+    FIREWALL_OPEN_PORTS="$(_fw_normalize_list "$ports" port)"
   fi
 
   local sources
-  sources="$(prompt_read "Inbound source IPs/CIDRs (empty = any)" "${FIREWALL_INBOUND_SOURCES}")"
+  sources="$(prompt_read "Inbound source IPs/CIDRs for SSH/UI (empty = any)" "${FIREWALL_INBOUND_SOURCES}")"
   FIREWALL_INBOUND_SOURCES="$(_fw_normalize_list "$sources" addr)"
 
   printf '\n'
@@ -293,33 +348,38 @@ _fw_collect_policy() {
   _fw_protect_ssh_source
 }
 
+_fw_emit_inbound() {
+  # Prints: proto port [source]   — empty source means any
+  local spec="$1"
+  local sourced="${2:-true}"
+  local proto port src
+  proto="$(_fw_port_proto "$spec")"
+  port="$(_fw_port_num "$spec")"
+  if is_true "$sourced" && [[ -n "${FIREWALL_INBOUND_SOURCES:-}" ]]; then
+    while IFS= read -r src; do
+      [[ -z "$src" ]] && continue
+      printf '%s %s %s\n' "$proto" "$port" "$src"
+    done < <(_fw_inbound_sources)
+  else
+    printf '%s %s\n' "$proto" "$port"
+  fi
+}
+
 _fw_each_inbound_allow() {
   # Prints: proto port [source]
-  local proto port src
-  local ports=()
-  ports+=("$(_fw_ssh_port)/tcp")
-  if [[ "$(_fw_ssh_port)" != "$SSH_PORT_CURRENT" ]]; then
-    ports+=("${SSH_PORT_CURRENT}/tcp")
-  fi
   local extra
+  _fw_emit_inbound "$(_fw_ssh_port)/tcp" true
+  if [[ "$(_fw_ssh_port)" != "$SSH_PORT_CURRENT" ]]; then
+    _fw_emit_inbound "${SSH_PORT_CURRENT}/tcp" true
+  fi
   while IFS= read -r extra; do
     [[ -z "$extra" ]] && continue
-    ports+=("$extra")
+    _fw_emit_inbound "$extra" true
   done < <(_fw_extra_ports)
-
-  local spec
-  for spec in "${ports[@]}"; do
-    proto="$(_fw_port_proto "$spec")"
-    port="$(_fw_port_num "$spec")"
-    if [[ -z "${FIREWALL_INBOUND_SOURCES:-}" ]]; then
-      printf '%s %s\n' "$proto" "$port"
-    else
-      while IFS= read -r src; do
-        [[ -z "$src" ]] && continue
-        printf '%s %s %s\n' "$proto" "$port" "$src"
-      done < <(_fw_inbound_sources)
-    fi
-  done
+  while IFS= read -r extra; do
+    [[ -z "$extra" ]] && continue
+    _fw_emit_inbound "$extra" false
+  done < <(_fw_open_ports)
 }
 
 _fw_apply_ufw() {

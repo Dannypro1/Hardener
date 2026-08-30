@@ -227,6 +227,7 @@ load_all_config() {
   load_config_file "${CONFIG_DIR}/wazuh.conf"
   load_config_file "${CONFIG_DIR}/auditd.conf"
   load_config_file "${CONFIG_DIR}/defense.conf"
+  load_config_file "${CONFIG_DIR}/org.conf"
 }
 
 load_profile() {

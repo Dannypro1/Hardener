@@ -18,6 +18,7 @@ run_one() {
 
 run_one "${TEST_DIR}/test_os_detection.sh"
 run_one "${TEST_DIR}/test_ssh.sh"
+run_one "${TEST_DIR}/test_users.sh"
 run_one "${TEST_DIR}/test_firewall.sh"
 run_one "${TEST_DIR}/test_pam.sh"
 run_one "${TEST_DIR}/test_defense.sh"

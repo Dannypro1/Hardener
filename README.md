@@ -50,6 +50,8 @@ sudo ./harden.sh --dry-run
 sudo ./harden.sh --apply
 sudo ./harden.sh --rollback
 sudo ./harden.sh --report
+sudo ./harden.sh --profile trac
+sudo ./harden.sh --profile trac --set FIREWALL_ROLE=unifi
 sudo ./harden.sh --profile web-server
 sudo ./harden.sh --profile hardened --non-interactive
 sudo ./harden.sh --modules updates,ssh,firewall --dry-run
@@ -64,7 +66,7 @@ sudo ./harden.sh --set FS_TMP_NOEXEC=true --set USER_TIGHTEN_HOMES=false
 | `--apply` | Apply selected modules |
 | `--rollback` | Restore a previous backup session |
 | `--report` | Print the latest generated report |
-| `--profile NAME` | `basic`, `server`, `web-server`, `database-server`, `hardened` |
+| `--profile NAME` | `basic`, `server`, `web-server`, `database-server`, `hardened`, `trac` |
 | `--non-interactive` | No prompts; uses profile/module defaults |
 | `--yes` | Skip the final apply prompt (still refuses MFA / user-deletion dangers) |
 
@@ -113,8 +115,9 @@ Defaults live in `config/`:
 | File | Purpose |
 | --- | --- |
 | `hardening.conf` | Global flags, essential services, reboot policy |
+| `org.conf` | TRAC site defaults (AllowUsers, sourced CIDRs, Wazuh, fail2ban) |
 | `ssh.conf` | SSH drop-in settings |
-| `firewall.conf` | Backend, extra ports, default deny |
+| `firewall.conf` | Backend, restricted vs discovery ports, role (`generic`/`unifi`/`rpki`) |
 | `mfa.conf` | TOTP MFA (off by default) |
 | `wazuh.conf` | Manager address only — no keys |
 | `auditd.conf` | auditd rules path and log rotation |
@@ -143,13 +146,13 @@ Home-directory tightening, USB-storage blacklist, `/tmp` noexec, IPv6 disable, a
 
 | ID | What it does |
 | --- | --- |
-| `updates` | Refresh index, security updates, EOL / reboot reporting |
-| `users` | Lock empty passwords, umask/TMOUT, 0750 homes — no deletions |
-| `passwords` | login.defs aging, pwquality, faillock lockout |
+| `updates` | Refresh index, security updates, unattended-upgrades on Debian/Ubuntu |
+| `users` | Lock empty passwords, create AllowUsers, nologin extras — no deletions |
+| `passwords` | login.defs aging, pwquality (minlen 8, mixed class), faillock lockout |
 | `sudo` | Audit + `visudo -cf` validated drop-in |
-| `ssh` | Drop-in hardening, algorithm set optional |
+| `ssh` | Drop-in hardening, `sshd -T` verify, second-session warning |
 | `pam_mfa` | Optional SSH TOTP via PAM |
-| `firewall` | UFW / firewalld / nftables — choose inbound/outbound ports and IPs |
+| `firewall` | UFW / firewalld / nftables — sourced UI ports, open discovery ports |
 | `services` | Auto-disable telnet/rsh/NIS/TFTP; confirm avahi/cups |
 | `filesystem` | Sticky `/tmp`, remount `/dev/shm` nodev,nosuid,noexec |
 | `permissions` | Well-defined modes on shadow, sudoers, SSH keys |
@@ -173,9 +176,23 @@ Enroll users yourself with `google-authenticator`. This tool does not generate o
 
 Keep a console or out-of-band root session until a second SSH login with MFA succeeds.
 
+## TRAC site profile
+
+`sudo ./harden.sh --profile trac` applies the organization controls:
+
+- SSH: `PermitRootLogin no`, password + pubkey, no keyboard-interactive, `MaxAuthTries 3`, `AllowUsers sys-trac danny`
+- Creates `sys-trac` and `danny` if missing (password prompted, never logged, never sent to Slack)
+- Extra human accounts not in AllowUsers can be set to nologin; accounts are never deleted
+- UFW: deny inbound, allow outbound; SSH/UI only from `10.0.0.0/8`, `41.242.140.0/22`, `196.223.240.0/21`
+- `--set FIREWALL_ROLE=unifi` or `rpki` for sourced admin ports vs open AP/discovery ports
+- Wazuh agent to `10.10.11.40`, auditd `execve` as root, Fail2ban sshd `maxretry=4` / `bantime=15m`
+- Debian/Ubuntu `unattended-upgrades` via `20auto-upgrades` (no interactive `dpkg-reconfigure`)
+
+Keep the first SSH session open, test a second login, and keep console access before restarting sshd.
+
 ## Wazuh
 
-Wazuh is optional and assumes a **remote manager**. The menu separates install, configure, register, and validate. Set `WAZUH_REGISTRATION_PASSWORD` in the environment if you register non-interactively; it is never written to disk by the toolkit.
+Wazuh is optional and assumes a **remote manager**. The menu separates install, configure, register, and validate. Set `WAZUH_REGISTRATION_PASSWORD` in the environment if you register non-interactively; it is never written to disk by the toolkit. The agent name defaults to the hostname. When enabled, `/var/log/audit/audit.log` is added as a localfile and the agent is restarted.
 
 ## Rollback
 

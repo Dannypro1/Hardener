@@ -46,8 +46,32 @@ assert_contains "$rules" "tcp 22" "inbound rules include SSH"
 assert_contains "$rules" "tcp 80" "inbound rules include extra port"
 
 FIREWALL_INBOUND_SOURCES="203.0.113.10"
+FIREWALL_OPEN_PORTS=""
 rules="$(_fw_each_inbound_allow)"
 assert_contains "$rules" "203.0.113.10" "inbound rules include source IP"
+assert_contains "$rules" "tcp 80 203.0.113.10" "restricted extra ports are sourced"
+
+FIREWALL_OPEN_PORTS="3478/udp,10001/udp"
+rules="$(_fw_each_inbound_allow)"
+assert_contains "$rules" "udp 3478" "discovery ports are listed"
+assert_not_contains "$rules" "udp 3478 203.0.113.10" "discovery ports are not sourced"
+assert_contains "$rules" "tcp 22 203.0.113.10" "SSH remains sourced"
+
+FIREWALL_ROLE="unifi"
+FIREWALL_ALLOWED_PORTS=""
+FIREWALL_OPEN_PORTS=""
+_fw_apply_role
+assert_contains "$FIREWALL_ALLOWED_PORTS" "8443/tcp" "unifi role sets sourced web ports"
+assert_contains "$FIREWALL_OPEN_PORTS" "3478/udp" "unifi role keeps discovery ports open"
+
+FIREWALL_ROLE="rpki"
+FIREWALL_ALLOWED_PORTS=""
+FIREWALL_OPEN_PORTS="keep-me"
+_fw_apply_role
+assert_contains "$FIREWALL_ALLOWED_PORTS" "8323/tcp" "rpki role sets sourced service ports"
+assert_eq "$FIREWALL_OPEN_PORTS" "keep-me" "rpki role does not invent discovery ports when already set"
+FIREWALL_ROLE="generic"
+FIREWALL_OPEN_PORTS=""
 
 SSH_CONNECTION="198.51.100.20 51234 10.0.0.5 22"
 FIREWALL_INBOUND_SOURCES="10.0.0.0/8"

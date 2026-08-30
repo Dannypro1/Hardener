@@ -50,7 +50,7 @@ Options:
   --rollback           Restore a previous backup session.
   --report             Print the most recent audit report.
   --profile NAME       Use a predefined profile: basic, server, web-server,
-                       database-server, hardened.
+                       database-server, hardened, trac.
   --modules LIST       Comma-separated module ids or menu numbers.
   --non-interactive    Do not prompt. Uses profile/module defaults and --set.
   --set NAME=value     Turn a defense on or off (repeatable). Example:
