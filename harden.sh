@@ -63,7 +63,7 @@ Options:
 Modules:
   updates users passwords sudo ssh pam_mfa firewall services filesystem
   permissions kernel sysctl auditd logging fail2ban time_sync network
-  integrity wazuh compliance
+  integrity wazuh compliance cve_fix
 EOF
 }
 
@@ -172,7 +172,7 @@ run_pre_audit() {
   for id in "${SELECTED_MODULES[@]}"; do
     run_module_hook "$id" "audit"
     case "$id" in
-      ssh|firewall|users|permissions|services|pam_mfa|wazuh|compliance)
+      ssh|firewall|users|permissions|services|pam_mfa|wazuh|compliance|cve_fix)
         run_check "$id"
         ;;
     esac
@@ -201,7 +201,7 @@ run_post_audit() {
   for id in "${SELECTED_MODULES[@]}"; do
     run_module_hook "$id" "audit"
     case "$id" in
-      ssh|firewall|users|permissions|services|pam_mfa|wazuh|compliance)
+      ssh|firewall|users|permissions|services|pam_mfa|wazuh|compliance|cve_fix)
         run_check "$id"
         ;;
     esac

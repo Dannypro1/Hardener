@@ -166,6 +166,7 @@ Home-directory tightening, USB-storage blacklist, `/tmp` noexec, IPv6 disable, a
 | `integrity` | AIDE install / init / check |
 | `wazuh` | Optional agent install, configure, register, validate |
 | `compliance` | Unified scored audit |
+| `cve_fix` | Audit and remediate vulnerability assessment CVEs (e.g. kernel backlog) |
 | `backups` | Local session retention |
 
 ## PAM MFA
@@ -193,6 +194,22 @@ Keep the first SSH session open, test a second login, and keep console access be
 ## Wazuh
 
 Wazuh is optional and assumes a **remote manager**. The menu separates install, configure, register, and validate. Set `WAZUH_REGISTRATION_PASSWORD` in the environment if you register non-interactively; it is never written to disk by the toolkit. The agent name defaults to the hostname. When enabled, `/var/log/audit/audit.log` is added as a localfile and the agent is restarted.
+
+## CVE Remediation Channel
+
+Dedicated channel and scripts to remediate vulnerability assessment findings:
+
+```bash
+# Standalone CVE fixing channel
+sudo ./cve-fixing/cve-fix.sh --audit
+sudo ./cve-fixing/cve-fix.sh --dry-run --target uisp
+sudo ./cve-fixing/cve-fix.sh --apply --target uisp
+
+# Or through the main hardener workflow
+sudo ./harden.sh --modules cve_fix --apply
+```
+
+See [cve-fixing/README.md](cve-fixing/README.md) for full vulnerability breakdown and host-by-host playbooks.
 
 ## Rollback
 

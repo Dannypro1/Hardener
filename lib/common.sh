@@ -82,6 +82,7 @@ MODULE_CATALOG=(
   "integrity:File Integrity Monitoring"
   "wazuh:Wazuh Integration"
   "compliance:Compliance Audit"
+  "cve_fix:CVE Remediation"
 )
 
 # -----------------------------------------------------------------------------
