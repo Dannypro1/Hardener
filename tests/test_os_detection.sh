@@ -40,4 +40,15 @@ parse_module_selection "1,5"
 assert_eq "${SELECTED_MODULES[0]}" "updates" "menu index 1 is updates"
 assert_eq "${SELECTED_MODULES[1]}" "ssh" "menu index 5 is ssh"
 
+parse_module_selection "21"
+assert_eq "${SELECTED_MODULES[*]}" user_management '21 selects only User Management'
+parse_module_selection "22"
+assert_eq "${SELECTED_MODULES[*]}" cve_fix '22 selects CVE Remediation'
+parse_module_selection "23"
+assert_eq "${#SELECTED_MODULES[@]}" "${#MODULE_CATALOG[@]}" '23 selects all modules'
+menu="$(show_module_menu)"
+assert_contains "$menu" '[21]  User Management' 'menu shows User Management'
+assert_contains "$menu" '[22]  CVE Remediation' 'menu shows CVE Remediation'
+assert_contains "$menu" '[23]  ALL MODULES' 'menu shows updated all selection'
+
 test_summary test_os_detection

@@ -63,7 +63,7 @@ Options:
 Modules:
   updates users passwords sudo ssh pam_mfa firewall services filesystem
   permissions kernel sysctl auditd logging fail2ban time_sync network
-  integrity wazuh compliance cve_fix
+  integrity wazuh compliance user_management cve_fix
 EOF
 }
 

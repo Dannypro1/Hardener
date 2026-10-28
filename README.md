@@ -167,6 +167,7 @@ Home-directory tightening, USB-storage blacklist, `/tmp` noexec, IPv6 disable, a
 | `wazuh` | Optional agent install, configure, register, validate |
 | `compliance` | Unified scored audit |
 | `cve_fix` | Audit and remediate vulnerability assessment CVEs (e.g. kernel backlog) |
+| `user_management` | Menu option 21: onboard Ange and Spencer with OS-specific admin group, temporary passwords, and SSH access |
 | `backups` | Local session retention |
 
 ## PAM MFA
@@ -198,6 +199,8 @@ To apply just account and SSH management on the Linux server:
 ```bash
 sudo bash harden.sh --profile trac --modules users,sudo,ssh --apply
 ```
+
+Alternatively, select **21 — User Management** in the interactive menu to run only the new Ange/Spencer onboarding and SSH configuration workflow. CVE Remediation is option **22** and All Modules is **23**. You can also run `sudo bash harden.sh --modules user_management --apply`. This option preserves configured SSH users and uses the existing SSH module's validation and reload safeguards.
 
 Keep `USER_ENSURE_SSH_USERS` enabled in the defense options. Enter each new user's temporary password twice when `passwd` prompts. Ange and Spencer then connect using `ssh ange@SERVER` or `ssh spencer@SERVER`; the terminal prompts them to choose a new password before continuing. This requires effective SSH password authentication and PAM to be enabled (the TRAC defaults). Keep the current session open while testing a second login.
 

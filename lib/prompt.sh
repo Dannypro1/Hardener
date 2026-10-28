@@ -88,7 +88,7 @@ show_module_menu() {
   ui_box_center "SELECT SECURITY MODULES"
   ui_box_sep
   local i=1
-  local mid=10
+  local mid=$(( (${#MODULE_CATALOG[@]} + 1) / 2 ))
   local left right
   while (( i <= mid )); do
     local j=$((i + mid))
@@ -102,12 +102,16 @@ show_module_menu() {
     i=$((i + 1))
   done
   ui_box_sep
-  ui_box_row " [21]  ALL MODULES"
+  ui_box_row " [$((${#MODULE_CATALOG[@]} + 1))]  ALL MODULES"
   ui_box_bottom
   printf '\n%s  Enter numbers, comma-separated  ·  example: 1,5,6,7%s\n' "${C_GREEN}" "${C_RESET}"
 }
 
 select_modules_interactive() {
+  # Explicit --modules selections take precedence over the menu/profile.
+  if [[ ${#SELECTED_MODULES[@]} -gt 0 ]]; then
+    return 0
+  fi
   if [[ -n "${PROFILE_NAME_SELECTED}" ]]; then
     set_modules_from_profile
     log_info "Using profile '${PROFILE_NAME_SELECTED}' modules: ${SELECTED_MODULES[*]}"

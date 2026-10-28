@@ -82,6 +82,7 @@ MODULE_CATALOG=(
   "integrity:File Integrity Monitoring"
   "wazuh:Wazuh Integration"
   "compliance:Compliance Audit"
+  "user_management:User Management"
   "cve_fix:CVE Remediation"
 )
 
@@ -266,7 +267,7 @@ parse_module_selection() {
   local raw="$1"
   local token
   SELECTED_MODULES=()
-  if [[ "$raw" == "all" || "$raw" == "ALL" || "$raw" == "21" ]]; then
+  if [[ "$raw" == "all" || "$raw" == "ALL" || "$raw" == "$((${#MODULE_CATALOG[@]} + 1))" ]]; then
     for entry in "${MODULE_CATALOG[@]}"; do
       SELECTED_MODULES+=("${entry%%:*}")
     done
