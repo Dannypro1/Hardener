@@ -129,6 +129,8 @@ module_users_plan() {
   printf '  Tighten home directories: %s\n' "${USER_TIGHTEN_HOMES:-false}"
   printf '  nologin on system accounts: %s\n' "${USER_NOLOGIN_SYSTEM:-false}"
   printf '  Ensure SSH users: %s (never copy or log passwords)\n' "${SSH_ENSURE_USERS:-none}"
+  printf '  Account full names: %s\n' "${SSH_ENSURE_FULL_NAMES:-none}"
+  printf '  First-login password change for new accounts: %s\n' "${SSH_TEMP_PASSWORD_USERS:-none}"
   printf '  nologin extra humans not in AllowUsers: %s\n' "${USER_NOLOGIN_EXTRA:-false}"
   printf '  Never delete users; share new passwords out of band (not Slack via this tool)\n'
 }
@@ -202,33 +204,68 @@ _users_set_password() {
     return 0
   fi
   log_info "Set a password for ${acct}. It will not be logged. Share it out of band yourself if required."
-  passwd "$acct" || log_warning "passwd ${acct} failed or was skipped"
+  if ! passwd "$acct"; then
+    log_error "passwd ${acct} failed; account setup is incomplete"
+    return 1
+  fi
 }
 
 _users_ensure_login_account() {
   local name="$1"
   [[ -z "$name" ]] && return 0
+  local created=false fullname="" entry temporary=false shadow hash lastchange
+  local sudo_grp="${SSH_ENSURE_SUDO_GROUP:-}"
+  while IFS= read -r entry; do
+    [[ "${entry%%:*}" == "$name" ]] && fullname="${entry#*:}"
+  done < <(printf '%s' "${SSH_ENSURE_FULL_NAMES:-}" | tr ';' '\n'; printf '\n')
+  if printf '%s\n' "${SSH_TEMP_PASSWORD_USERS:-}" | tr ',' '\n' | grep -Fxq "$name"; then
+    temporary=true
+  fi
+  if ! changes_allowed; then
+    log_action "Would ensure login account ${name} (${fullname}), sudo=${SSH_ENSURE_SUDO:-true}, temporary password=${temporary}"
+    return 0
+  fi
+  if is_true "${SSH_ENSURE_SUDO:-true}"; then
+    if [[ -z "$sudo_grp" ]]; then
+      sudo_grp=sudo
+      getent group sudo >/dev/null 2>&1 || sudo_grp=wheel
+    fi
+    if ! getent group "$sudo_grp" >/dev/null 2>&1; then
+      log_error "Required admin group ${sudo_grp} is missing; cannot provision ${name}"
+      return 1
+    fi
+  fi
   if id "$name" >/dev/null 2>&1; then
     log_info "Login account already exists: ${name}"
   else
-    log_action "Create login account ${name} with bash and sudo"
-    if changes_allowed; then
-      local sudo_grp="sudo"
-      getent group sudo >/dev/null 2>&1 || sudo_grp="wheel"
-      if is_true "${SSH_ENSURE_SUDO:-true}"; then
-        useradd -m -s /bin/bash -G "$sudo_grp" "$name" || useradd -m -s /bin/bash "$name"
-      else
-        useradd -m -s /bin/bash "$name"
+    log_action "Create login account ${name} with bash"
+    useradd -m -s /bin/bash -c "$fullname" "$name" || return 1
+    created=true
+  fi
+  if [[ -n "$fullname" ]]; then
+    usermod -c "$fullname" "$name" || return 1
+  fi
+  if is_true "${SSH_ENSURE_SUDO:-true}"; then
+    usermod -aG "$sudo_grp" "$name" || return 1
+  fi
+  # Resume an unfinished first-time setup, but never reset established passwords.
+  shadow="$(getent shadow "$name")" || return 1
+  IFS=: read -r _ hash lastchange _ <<< "$shadow"
+  if is_true "$created" || { [[ "$lastchange" == 0 ]] && [[ "$hash" == '!'* || -z "$hash" ]]; }; then
+    if is_true "$temporary"; then
+      chage -d 0 "$name" || return 1
+    fi
+    _users_set_password "$name" || return 1
+    # passwd updates the password-change date; expire again after success.
+    if is_true "$temporary"; then
+      if ! chage -d 0 "$name"; then
+        passwd -l "$name"
+        log_error "Could not expire temporary password for ${name}; account locked"
+        return 1
       fi
     fi
-  fi
-  if id "$name" >/dev/null 2>&1 && is_true "${SSH_ENSURE_SUDO:-true}" && changes_allowed; then
-    local sudo_grp="sudo"
-    getent group sudo >/dev/null 2>&1 || sudo_grp="wheel"
-    usermod -aG "$sudo_grp" "$name" 2>/dev/null || true
-  fi
-  if id "$name" >/dev/null 2>&1; then
-    _users_set_password "$name"
+  else
+    log_info "Preserving existing password for ${name}"
   fi
 }
 
@@ -307,7 +344,7 @@ module_users_apply() {
     local u
     while IFS= read -r u; do
       [[ -z "$u" ]] && continue
-      _users_ensure_login_account "$u"
+      _users_ensure_login_account "$u" || return 1
     done < <(split_list "${SSH_ENSURE_USERS:-$SSH_ALLOW_USERS}")
   fi
 

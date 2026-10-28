@@ -181,8 +181,10 @@ Keep a console or out-of-band root session until a second SSH login with MFA suc
 
 `sudo ./harden.sh --profile trac` applies the organization controls:
 
-- SSH: `PermitRootLogin no`, password + pubkey, no keyboard-interactive, `MaxAuthTries 3`, `AllowUsers sys-trac danny`
-- Creates `sys-trac` and `danny` if missing (password prompted, never logged, never sent to Slack)
+- SSH: `PermitRootLogin no`, password + pubkey, no keyboard-interactive, `MaxAuthTries 3`, `AllowUsers sys-trac danny ange spencer`
+- Creates `sys-trac`, `danny`, `ange` (Ange Gakwandi), and `spencer` (Spencer Kamayo) if missing, and adds them to the `sudo` group. The group must already exist and be authorized in the host's sudoers policy.
+- Prompts through `passwd` for manually chosen passwords, without logging or storing them. New `ange` and `spencer` accounts must replace their temporary passwords at first login. Existing passwords are preserved on repeat runs.
+
 - Extra human accounts not in AllowUsers can be set to nologin; accounts are never deleted
 - UFW: deny inbound, allow outbound; SSH/UI only from `10.0.0.0/8`, `41.242.140.0/22`, `196.223.240.0/21`
 - `--set FIREWALL_ROLE=unifi` or `rpki` for sourced admin ports vs open AP/discovery ports
@@ -191,6 +193,15 @@ Keep a console or out-of-band root session until a second SSH login with MFA suc
 
 Keep the first SSH session open, test a second login, and keep console access before restarting sshd.
 
+To apply just account and SSH management on the Linux server:
+
+```bash
+sudo bash harden.sh --profile trac --modules users,sudo,ssh --apply
+```
+
+Keep `USER_ENSURE_SSH_USERS` enabled in the defense options. Enter each new user's temporary password twice when `passwd` prompts. Ange and Spencer then connect using `ssh ange@SERVER` or `ssh spencer@SERVER`; the terminal prompts them to choose a new password before continuing. This requires effective SSH password authentication and PAM to be enabled (the TRAC defaults). Keep the current session open while testing a second login.
+
+With `--non-interactive`, new accounts remain password-locked. Complete their setup locally with `sudo passwd ange && sudo chage -d 0 ange`, and likewise for `spencer`, or rerun interactively. Existing accounts with established passwords are not reset; use those same commands explicitly if they also need a temporary password. `SSH_ENSURE_FULL_NAMES` maps usernames to full names, and `SSH_TEMP_PASSWORD_USERS` selects accounts requiring a first-login password change.
 ## Wazuh
 
 Wazuh is optional and assumes a **remote manager**. The menu separates install, configure, register, and validate. Set `WAZUH_REGISTRATION_PASSWORD` in the environment if you register non-interactively; it is never written to disk by the toolkit. The agent name defaults to the hostname. When enabled, `/var/log/audit/audit.log` is added as a localfile and the agent is restarted.
