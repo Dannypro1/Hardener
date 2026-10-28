@@ -35,7 +35,9 @@ chage() { printf 'chage %s\n' "$*" >> "$calls"; }
 MODE=apply
 NON_INTERACTIVE=false
 SSH_ENSURE_SUDO=true
-SSH_ENSURE_SUDO_GROUP=sudo
+SSH_ENSURE_SUDO_GROUP=""
+OS_ID=ubuntu
+OS_ID_LIKE=""
 SSH_ENSURE_FULL_NAMES='ange:Ange Gakwandi;spencer:Spencer Kamayo'
 SSH_TEMP_PASSWORD_USERS='ange,spencer'
 group_exists=true
@@ -101,5 +103,32 @@ for name in ange spencer; do
 done
 load_profile trac
 assert_contains "$(_ssh_build_dropin)" 'AllowUsers sys-trac danny ange spencer' 'TRAC retains all SSH accounts'
+assert_eq "$SSH_ENSURE_SUDO_GROUP" '' 'TRAC leaves admin group selection to OS detection'
+
+# Both groups may exist: selection must follow the OS, not group availability.
+MODE=apply
+group_exists=true
+account_exists=true
+account_hash='hashed-password'
+account_date=20000
+for OS_ID in ubuntu debian rhel centos fedora rocky almalinux; do
+  case "$OS_ID" in ubuntu|debian) expected=sudo ;; *) expected=wheel ;; esac
+  assert_eq "$(_users_sudo_group)" "$expected" "$OS_ID selects $expected"
+  : > "$calls"
+  _users_ensure_login_account ange
+  assert_contains "$(cat "$calls")" "usermod -aG $expected ange" "$OS_ID applies correct admin membership"
+done
+OS_ID=derivative
+OS_ID_LIKE='ubuntu debian'
+assert_eq "$(_users_sudo_group)" sudo 'Debian derivative selects sudo'
+OS_ID_LIKE='rhel fedora'
+assert_eq "$(_users_sudo_group)" wheel 'Red Hat derivative selects wheel'
+OS_ID_LIKE=''
+: > "$calls"
+if _users_ensure_login_account ange; then rc=0; else rc=1; fi
+assert_false 'unknown distribution requires explicit admin group' "$rc"
+assert_eq "$(cat "$calls")" '' 'unknown distribution makes no account changes'
+SSH_ENSURE_SUDO_GROUP=administrators
+assert_eq "$(_users_sudo_group)" administrators 'explicit admin group override is honored'
 
 test_summary test_users

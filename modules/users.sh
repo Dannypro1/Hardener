@@ -210,11 +210,32 @@ _users_set_password() {
   fi
 }
 
+_users_sudo_group() {
+  if [[ -n "${SSH_ENSURE_SUDO_GROUP:-}" ]]; then
+    printf '%s' "$SSH_ENSURE_SUDO_GROUP"
+    return 0
+  fi
+  case "${OS_ID:-}" in
+    ubuntu|debian) printf 'sudo' ;;
+    rhel|centos|fedora|rocky|almalinux) printf 'wheel' ;;
+    *)
+      case " ${OS_ID_LIKE:-} " in
+        *" debian "*|*" ubuntu "*) printf 'sudo' ;;
+        *" rhel "*|*" fedora "*|*" centos "*) printf 'wheel' ;;
+        *)
+          log_error "Unknown admin group for ${OS_ID:-unknown}; set SSH_ENSURE_SUDO_GROUP explicitly"
+          return 1
+          ;;
+      esac
+      ;;
+  esac
+}
+
 _users_ensure_login_account() {
   local name="$1"
   [[ -z "$name" ]] && return 0
   local created=false fullname="" entry temporary=false shadow hash lastchange
-  local sudo_grp="${SSH_ENSURE_SUDO_GROUP:-}"
+  local sudo_grp=""
   while IFS= read -r entry; do
     [[ "${entry%%:*}" == "$name" ]] && fullname="${entry#*:}"
   done < <(printf '%s' "${SSH_ENSURE_FULL_NAMES:-}" | tr ';' '\n'; printf '\n')
@@ -226,10 +247,7 @@ _users_ensure_login_account() {
     return 0
   fi
   if is_true "${SSH_ENSURE_SUDO:-true}"; then
-    if [[ -z "$sudo_grp" ]]; then
-      sudo_grp=sudo
-      getent group sudo >/dev/null 2>&1 || sudo_grp=wheel
-    fi
+    sudo_grp="$(_users_sudo_group)" || return 1
     if ! getent group "$sudo_grp" >/dev/null 2>&1; then
       log_error "Required admin group ${sudo_grp} is missing; cannot provision ${name}"
       return 1

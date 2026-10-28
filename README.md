@@ -182,7 +182,7 @@ Keep a console or out-of-band root session until a second SSH login with MFA suc
 `sudo ./harden.sh --profile trac` applies the organization controls:
 
 - SSH: `PermitRootLogin no`, password + pubkey, no keyboard-interactive, `MaxAuthTries 3`, `AllowUsers sys-trac danny ange spencer`
-- Creates `sys-trac`, `danny`, `ange` (Ange Gakwandi), and `spencer` (Spencer Kamayo) if missing, and adds them to the `sudo` group. The group must already exist and be authorized in the host's sudoers policy.
+- Creates `sys-trac`, `danny`, `ange` (Ange Gakwandi), and `spencer` (Spencer Kamayo) if missing. Uses the detected OS to add them to `sudo` on Ubuntu/Debian or `wheel` on Red Hat, CentOS, Fedora, Rocky Linux, and AlmaLinux. Related distributions use `ID_LIKE` from `/etc/os-release`; unrecognized distributions require an explicit `SSH_ENSURE_SUDO_GROUP`. The selected group must already exist and be authorized in the host's sudoers policy.
 - Prompts through `passwd` for manually chosen passwords, without logging or storing them. New `ange` and `spencer` accounts must replace their temporary passwords at first login. Existing passwords are preserved on repeat runs.
 
 - Extra human accounts not in AllowUsers can be set to nologin; accounts are never deleted
